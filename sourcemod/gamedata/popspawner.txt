@@ -1,0 +1,14 @@
+"Games"
+{
+	"tf"
+	{
+		"Signatures"
+		{
+			"IPopulationSpawner::ParseSpawner"
+			{
+				"library" "server"
+				"linux" "_ZN18IPopulationSpawner12ParseSpawnerEP10IPopulatorP9KeyValues"
+			}
+		}
+	}
+}
