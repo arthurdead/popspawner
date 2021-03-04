@@ -7,7 +7,7 @@
 			"IPopulationSpawner::ParseSpawner"
 			{
 				"library" "server"
-				"linux" "_ZN18IPopulationSpawner12ParseSpawnerEP10IPopulatorP9KeyValues"
+				"linux" "@_ZN18IPopulationSpawner12ParseSpawnerEP10IPopulatorP9KeyValues"
 			}
 		}
 	}
