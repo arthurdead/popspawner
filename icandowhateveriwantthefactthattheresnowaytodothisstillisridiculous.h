@@ -31,7 +31,7 @@ public:
 	
 	Handle_t CreateCellArrayHandle(ICellArray *&arr, IdentityToken_t *owner)
 	{
-		arr = new CellArray(0);
+		arr = new CellArray(1);
 		return CreateCoreHandle(arraylist_handle, arr, owner);
 	}
 	
