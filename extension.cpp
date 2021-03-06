@@ -48,6 +48,9 @@ SMEXT_LINK(&g_Sample);
 
 typedef CUtlVector< CHandle< CBaseEntity > > EntityHandleVector_t;
 
+void *AllocPooledStringPtr = nullptr;
+ICvar *icvar = nullptr;
+
 #define TF_CLASS_UNDEFINED 0
 
 enum AttributeType : int;
@@ -95,6 +98,8 @@ class SPPopulationSpawner;
 using pop_spawner_map_t = std::unordered_map<pop_entry_t *, SPPopulationSpawner *>;
 pop_spawner_map_t popspawnermap{};
 
+using data_map_t = std::unordered_map<std::string, cell_t>;
+
 struct pop_entry_t
 {
 	pop_entry_t(const std::string &name_);
@@ -112,6 +117,9 @@ struct pop_entry_t
 	bool IsVarious = false;
 	std::string name{};
 	IdentityToken_t *owner = nullptr;
+	Handle_t hndl = BAD_HANDLE;
+	data_map_t data{};
+	IPopulator *populator = nullptr;
 };
 
 template <typename T>
@@ -124,6 +132,8 @@ T void_to_func(void *ptr)
 
 #include "icandowhateveriwantthefactthattheresnowaytodothisstillisridiculous.h"
 
+ConVar popspawner_maxiconlen("popspawner_maxiconlen", "50");
+
 class SPPopulationSpawner : public IPopulationSpawner
 {
 public:
@@ -135,6 +145,7 @@ public:
 	
 	~SPPopulationSpawner()
 	{
+		entry->populator = nullptr;
 		popspawnermap.erase(entry);
 	}
 	
@@ -149,6 +160,7 @@ public:
 			return false;
 		}
 		
+		func->PushCell(entry->hndl);
 		Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, entry->owner);
 		func->PushCell(hndl);
 		cell_t res = 0;
@@ -169,6 +181,7 @@ public:
 			return false;
 		}
 		
+		func->PushCell(entry->hndl);
 		cell_t vec[3];
 		vec[0] = sp_ftoc(here.x);
 		vec[1] = sp_ftoc(here.y);
@@ -211,6 +224,7 @@ public:
 			return false;
 		}
 		
+		func->PushCell(entry->hndl);
 		func->PushString(pszEventName);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -229,6 +243,7 @@ public:
 			return TF_CLASS_UNDEFINED;
 		}
 		
+		func->PushCell(entry->hndl);
 		func->PushCell(nSpawnNum);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -247,6 +262,7 @@ public:
 			return 0;
 		}
 		
+		func->PushCell(entry->hndl);
 		func->PushCell(nSpawnNum);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -265,16 +281,26 @@ public:
 			return NULL_STRING;
 		}
 		
-		/*
+		int len = popspawner_maxiconlen.GetInt();
+		char *str = new char[len];
+		strcpy(str, "");
+		
+		func->PushCell(entry->hndl);
 		func->PushCell(nSpawnNum);
-		func->PushArray(nullptr, 0);
-		cell_t len = 0;
-		func->PushCellByRef(&len);
+		func->PushStringEx(str, len, SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
+		func->PushCell(len);
 		cell_t res = 0;
 		func->Execute(&res);
-		*/
 		
-		return NULL_STRING;
+		if(!res) {
+			return NULL_STRING;
+		}
+		
+		string_t id = ((string_t(*)(const char *))AllocPooledStringPtr)( str );
+		
+		delete[] str;
+		
+		return id;
 	}
 	
 	bool IsMiniBoss( int nSpawnNum = -1 )
@@ -288,6 +314,7 @@ public:
 			return false;
 		}
 		
+		func->PushCell(entry->hndl);
 		func->PushCell(nSpawnNum);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -306,6 +333,7 @@ public:
 			return false;
 		}
 		
+		func->PushCell(entry->hndl);
 		func->PushCell(type);
 		func->PushCell(nSpawnNum);
 		cell_t res = 0;
@@ -363,6 +391,7 @@ DETOUR_DECL_STATIC2(ParseSpawner, IPopulationSpawner *, IPopulator *, populator,
 	pop_entry_map_t::iterator it{poentrypmap.find(name)};
 	if(it != poentrypmap.end()) {
 		pop_entry_t *entry = it->second;
+		entry->populator = populator;
 		IPopulationSpawner *spawner = new SPPopulationSpawner{entry, populator};
 		
 		if(!spawner->Parse(data)) {
@@ -390,7 +419,8 @@ cell_t register_popspawner(IPluginContext *pContext, const cell_t *params)
 	
 	pop_entry_t *obj = new pop_entry_t{name};
 	obj->owner = pContext->GetIdentity();
-	return handlesys->CreateHandle(popspawner_handle, obj, pContext->GetIdentity(), myself->GetIdentity(), nullptr);
+	obj->hndl = handlesys->CreateHandle(popspawner_handle, obj, pContext->GetIdentity(), myself->GetIdentity(), nullptr);
+	return obj->hndl;
 }
 
 cell_t Parseset(IPluginContext *pContext, const cell_t *params)
@@ -553,6 +583,66 @@ cell_t IsVariousset(IPluginContext *pContext, const cell_t *params)
 	return 0;
 }
 
+cell_t Populatorget(IPluginContext *pContext, const cell_t *params)
+{
+	HandleSecurity security(pContext->GetIdentity(), myself->GetIdentity());
+	
+	pop_entry_t *obj = nullptr;
+	HandleError err = handlesys->ReadHandle(params[1], popspawner_handle, &security, (void **)&obj);
+	if(err != HandleError_None)
+	{
+		return pContext->ThrowNativeError("Invalid Handle %x (error: %d)", params[1], err);
+	}
+	
+	return (cell_t)obj->populator;
+}
+
+cell_t set_data(IPluginContext *pContext, const cell_t *params)
+{
+	HandleSecurity security(pContext->GetIdentity(), myself->GetIdentity());
+	
+	pop_entry_t *obj = nullptr;
+	HandleError err = handlesys->ReadHandle(params[1], popspawner_handle, &security, (void **)&obj);
+	if(err != HandleError_None)
+	{
+		return pContext->ThrowNativeError("Invalid Handle %x (error: %d)", params[1], err);
+	}
+	
+	char *name = nullptr;
+	pContext->LocalToString(params[2], &name);
+	
+	data_map_t::iterator it{obj->data.find(name)};
+	if(it == obj->data.end()) {
+		it = obj->data.emplace(data_map_t::value_type{name, 0}).first;
+	}
+	
+	it->second = params[3];
+	
+	return 0;
+}
+
+cell_t get_data(IPluginContext *pContext, const cell_t *params)
+{
+	HandleSecurity security(pContext->GetIdentity(), myself->GetIdentity());
+	
+	pop_entry_t *obj = nullptr;
+	HandleError err = handlesys->ReadHandle(params[1], popspawner_handle, &security, (void **)&obj);
+	if(err != HandleError_None)
+	{
+		return pContext->ThrowNativeError("Invalid Handle %x (error: %d)", params[1], err);
+	}
+	
+	char *name = nullptr;
+	pContext->LocalToString(params[2], &name);
+	
+	data_map_t::iterator it{obj->data.find(name)};
+	if(it == obj->data.end()) {
+		return pContext->ThrowNativeError("theres no data with the name %s", name);
+	}
+	
+	return it->second;
+}
+
 sp_nativeinfo_t natives[] =
 {
 	{"CustomPopulationSpawner.Parse.set", Parseset},
@@ -565,6 +655,9 @@ sp_nativeinfo_t natives[] =
 	{"CustomPopulationSpawner.HasAttribute.set", HasAttributeset},
 	{"CustomPopulationSpawner.WhereRequired.set", WhereRequiredset},
 	{"CustomPopulationSpawner.IsVarious.set", IsVariousset},
+	{"CustomPopulationSpawner.Populator.get", Populatorget},
+	{"CustomPopulationSpawner.set_data", set_data},
+	{"CustomPopulationSpawner.get_data", get_data},
 	{"register_popspawner", register_popspawner},
 	{NULL, NULL}
 };
@@ -584,6 +677,20 @@ void Sample::OnHandleDestroy(HandleType_t type, void *object)
 
 CDetour *pParseSpawner = nullptr;
 
+bool Sample::RegisterConCommandBase(ConCommandBase *pCommand)
+{
+	META_REGCVAR(pCommand);
+	return true;
+}
+
+bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool late)
+{
+	GET_V_IFACE_CURRENT(GetEngineFactory, icvar, ICvar, CVAR_INTERFACE_VERSION);
+	g_pCVar = icvar;
+	ConVar_Register(0, this);
+	return true;
+}
+
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
 	IGameConfig *g_pGameConf = nullptr;
@@ -593,6 +700,8 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	
 	pParseSpawner = DETOUR_CREATE_STATIC(ParseSpawner, "IPopulationSpawner::ParseSpawner")
 	pParseSpawner->EnableDetour();
+	
+	g_pGameConf->GetMemSig("AllocPooledString", &AllocPooledStringPtr);
 	
 	gameconfs->CloseGameConfigFile(g_pGameConf);
 	

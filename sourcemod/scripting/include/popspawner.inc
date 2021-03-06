@@ -38,26 +38,33 @@ enum AttributeType
 typeset popspawner_functions
 {
 	//Parse
-	function bool (KeyValues data);
+	function bool (CustomPopulationSpawner spawner, KeyValues data);
 
 	//Spawn
-	function bool (float pos[3], ArrayList result);
+	function bool (CustomPopulationSpawner spawner, float pos[3], ArrayList result);
 
 	//HasEventChangeAttributes
-	function bool (const char[] name);
+	function bool (CustomPopulationSpawner spawner, const char[] name);
 
 	//GetClass, GetHealth
-	function int (int num);
+	function int (CustomPopulationSpawner spawner, int num);
 
 	//GetClassIcon
-	function void (int num, char[] str, int &len);
+	function bool (CustomPopulationSpawner spawner, int num, char[] str, int len);
 
 	//IsMiniBoss
-	function bool (int num);
+	function bool (CustomPopulationSpawner spawner, int num);
 
 	//HasAttribute
-	function bool (AttributeType attr, int num);
+	function bool (CustomPopulationSpawner spawner, AttributeType attr, int num);
 };
+
+methodmap IPopulator
+{
+
+};
+
+#define IPopulator_Null (view_as<IPopulator>(Address_null))
 
 methodmap CustomPopulationSpawner
 {
@@ -110,6 +117,14 @@ methodmap CustomPopulationSpawner
 	{
 		public native set(bool func);
 	}
+
+	property IPopulator Populator
+	{
+		public native get();
+	}
+
+	public native void set_data(const char[] name, any data);
+	public native any get_data(const char[] name);
 };
 
 native CustomPopulationSpawner register_popspawner(const char[] name);

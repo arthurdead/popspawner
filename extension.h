@@ -44,11 +44,13 @@
  * @brief Sample implementation of the SDK Extension.
  * Note: Uncomment one of the pre-defined virtual functions in order to use it.
  */
-class Sample : public SDKExtension, public IHandleTypeDispatch, public IPluginsListener
+class Sample : public SDKExtension, public IHandleTypeDispatch, public IPluginsListener, public IConCommandBaseAccessor
 {
 public:
 	virtual void OnHandleDestroy(HandleType_t type, void *object);
 	virtual void OnPluginUnloaded(IPlugin *plugin);
+	
+	virtual bool RegisterConCommandBase(ConCommandBase *pCommand);
 	
 	/**
 	 * @brief This is called after the initial loading sequence has been processed.
@@ -94,7 +96,7 @@ public:
 	 * @param late			Whether or not Metamod considers this a late load.
 	 * @return				True to succeed, false to fail.
 	 */
-	//virtual bool SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool late);
+	virtual bool SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool late);
 
 	/**
 	 * @brief Called when Metamod is detaching, after the extension version is called.

@@ -9,6 +9,11 @@
 				"library" "server"
 				"linux" "@_ZN18IPopulationSpawner12ParseSpawnerEP10IPopulatorP9KeyValues"
 			}
+			"AllocPooledString"
+			{
+				"library" "server"
+				"linux" "@_Z17AllocPooledStringPKc"
+			}
 		}
 	}
 }

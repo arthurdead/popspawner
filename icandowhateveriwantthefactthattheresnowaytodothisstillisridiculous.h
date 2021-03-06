@@ -24,6 +24,7 @@ public:
 	{
 		KeyValueStack *kvstack = new KeyValueStack{};
 		kvstack->pBase = data;
+		kvstack->pCurRoot.push(data);
 		kvstack->m_bDeleteOnDestroy = false;
 		return CreateCoreHandle(keyvalues_handle, kvstack, owner);
 	}
