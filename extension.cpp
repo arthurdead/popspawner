@@ -122,14 +122,6 @@ struct pop_entry_t
 	IPopulator *populator = nullptr;
 };
 
-template <typename T>
-T void_to_func(void *ptr)
-{
-	union { T f; void *p; };
-	p = ptr;
-	return f;
-}
-
 #include "icandowhateveriwantthefactthattheresnowaytodothisstillisridiculous.h"
 
 ConVar popspawner_maxiconlen("popspawner_maxiconlen", "50");
