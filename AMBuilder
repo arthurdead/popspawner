@@ -38,4 +38,6 @@ for sdk_name in Extension.sdks:
   
   binary = Extension.HL2Config(project, projectName + '.ext.' + sdk.ext, sdk)
 
+  binary.compiler.cxxincludes += [os.path.join(sdk.path, 'game/shared')]
+
 Extension.extensions = builder.Add(project)

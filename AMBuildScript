@@ -304,7 +304,6 @@ class ExtensionConfig(object):
     else:
       paths.append(['public', 'game', 'server'])
       paths.append(['public', 'toolframework'])
-      paths.append(['game', 'shared'])
       paths.append(['common'])
 
     compiler.defines += ['SOURCE_ENGINE=' + sdk.code]
