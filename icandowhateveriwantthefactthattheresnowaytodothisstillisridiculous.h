@@ -12,6 +12,11 @@ util then this file will remain here
 
 #define private protected
 #include <core/logic/HandleSys.h>
+#include <core/logic/ShareSys.h>
+#include <core/logic/PluginSys.h>
+#include <core/logic/ExtensionSys.h>
+
+using namespace std::literals::string_literals;
 
 HandleType_t keyvalues_handle = 0;
 HandleType_t arraylist_handle = 0;
@@ -20,19 +25,25 @@ IdentityType_t coreidenttype = 0;
 class HandleSystemHack : public HandleSystem
 {
 public:
-	Handle_t CreateKeyValuesHandle(KeyValues *data, IdentityToken_t *owner)
+	Handle_t CreateKeyValuesHandle(KeyValues *data, IdentityToken_t *owner, HandleError *err)
 	{
 		KeyValueStack *kvstack = new KeyValueStack{};
 		kvstack->pBase = data;
 		kvstack->pCurRoot.push(data);
 		kvstack->m_bDeleteOnDestroy = false;
-		return CreateCoreHandle(keyvalues_handle, kvstack, owner);
+		HandleSecurity sec{};
+		sec.pIdentity = nullptr;
+		sec.pOwner = owner;
+		return CreateHandleInt__(keyvalues_handle, kvstack, &sec, nullptr, nullptr, false);
 	}
 	
-	Handle_t CreateCellArrayHandle(ICellArray *&arr, IdentityToken_t *owner)
+	Handle_t CreateCellArrayHandle(ICellArray *&arr, IdentityToken_t *owner, HandleError *err)
 	{
 		arr = new CellArray(1);
-		return CreateCoreHandle(arraylist_handle, arr, owner);
+		HandleSecurity sec{};
+		sec.pIdentity = nullptr;
+		sec.pOwner = owner;
+		return CreateHandleInt__(arraylist_handle, arr, &sec, nullptr, nullptr, false);
 	}
 	
 	static void init()
@@ -43,23 +54,69 @@ public:
 	}
 	
 private:
-	Handle_t CreateCoreHandle(HandleType_t type, void *object, IdentityToken_t *owner)
+	Handle_t CreateHandleInt__(HandleType_t type, 
+									   void *object, 
+									   const HandleSecurity *pSec,
+									   HandleError *err, 
+									   const HandleAccess *pAccess,
+									   bool identity)
 	{
+		IdentityToken_t *ident;
+		IdentityToken_t *owner;
+
+		if (pSec)
+		{
+			ident = pSec->pIdentity;
+			owner = pSec->pOwner;
+		} else {
+			ident = NULL;
+			owner = NULL;
+		}
+
 		if (!type 
 			|| type >= HANDLESYS_TYPEARRAY_SIZE
 			|| m_Types[type].dispatch == NULL)
 		{
+			if (err)
+			{
+				*err = HandleError_Parameter;
+			}
 			return 0;
 		}
+
+		/* Check to see if we're allowed to create this handle type */
+	#if 0
+		QHandleType *pType = &m_Types[type];
+		if (!pType->typeSec.access[HTypeAccess_Create]
+		&& (!pType->typeSec.ident
+			|| pType->typeSec.ident != ident))
+		{
+			if (err)
+			{
+				*err = HandleError_Access;
+			}
+			return 0;
+		}
+	#endif
 
 		unsigned int index;
 		Handle_t handle;
 		QHandle *pHandle;
 		HandleError _err;
 
-		if ((_err=MakePrimHandle__(type, &pHandle, &index, &handle, owner, false)) != HandleError_None)
+		if ((_err=MakePrimHandle__(type, &pHandle, &index, &handle, owner, identity)) != HandleError_None)
 		{
+			if (err)
+			{
+				*err = _err;
+			}
 			return 0;
+		}
+
+		if (pAccess)
+		{
+			pHandle->access_special = true;
+			pHandle->sec = *pAccess;
 		}
 
 		pHandle->object = object;
@@ -78,10 +135,45 @@ private:
 		HandleError err;
 		unsigned int owner_index = 0;
 
-		unsigned int handle;
-		if ((err = TryAllocHandle__(&handle)) != HandleError_None)
+	#if 0
+		if (owner && (IdentityHandle(owner, &owner_index) != HandleError_None))
 		{
-			return err;
+			return HandleError_Identity;
+		}
+	#endif
+
+		unsigned int handle;
+		if ((err = TryAllocHandle(&handle)) != HandleError_None)
+		{
+			if (!TryAndFreeSomeHandles()
+				|| (err = TryAllocHandle(&handle)) != HandleError_None)
+			{
+				return err;
+			}
+		}
+
+		if (owner)
+		{
+			owner->num_handles++;
+		#if 0
+			if (!owner->warned_handle_usage && owner->num_handles >= HANDLESYS_WARN_USAGE)
+			{
+				owner->warned_handle_usage = true;
+
+				std::string path = "<unknown>";
+				if (auto plugin = scripts->FindPluginByIdentity(owner))
+				{
+					path = "plugin "s + plugin->GetFilename();
+				}
+				else if (auto ext = g_Extensions.GetExtensionFromIdent(owner))
+				{
+					path = "extension "s + ext->GetFilename();
+				}
+
+				logger->LogError("[SM] Warning: %s is using more than %d handles!",
+					path.c_str(), HANDLESYS_WARN_USAGE);
+			}
+		#endif
 		}
 
 		QHandle *pHandle = &m_Handles[handle];
@@ -105,7 +197,7 @@ private:
 
 		/* Create the hash value */
 		Handle_t hash = pHandle->serial;
-		hash <<= 16;
+		hash <<= HANDLESYS_HANDLE_BITS;
 		hash |= handle;
 
 		/* Add a reference count to the type */
@@ -117,8 +209,8 @@ private:
 		*in_handle = hash;
 
 		/* Decode the identity token 
-		* For now, we don't allow nested ownership
-		*/
+		 * For now, we don't allow nested ownership
+		 */
 		if (owner && !identity)
 		{
 			QHandle *pIdentity = &m_Handles[owner_index];
@@ -146,22 +238,27 @@ private:
 
 		return HandleError_None;
 	}
-	
-	HandleError TryAllocHandle__(unsigned int *handle)
-	{
-		if (m_FreeHandles == 0)
-		{
-			if (m_HandleTail >= HANDLESYS_MAX_HANDLES)
-			{
-				return HandleError_Limit;;
-			}
-			*handle = ++m_HandleTail;
-		}
-		else
-		{
-			*handle = m_Handles[m_FreeHandles--].freeID;
-		}
-
-		return HandleError_None;
-	}
 };
+
+HandleError HandleSystem::TryAllocHandle(unsigned int *handle)
+{
+	if (m_FreeHandles == 0)
+	{
+		if (m_HandleTail >= HANDLESYS_MAX_HANDLES)
+		{
+			return HandleError_Limit;;
+		}
+		*handle = ++m_HandleTail;
+	}
+	else
+	{
+		*handle = m_Handles[m_FreeHandles--].freeID;
+	}
+
+	return HandleError_None;
+}
+
+bool HandleSystem::TryAndFreeSomeHandles()
+{
+	return true;
+}

@@ -149,11 +149,17 @@ public:
 
 		IPluginFunction *func = entry->Parse;
 		if(!func) {
-			return false;
+			return true;
 		}
 		
+		HandleError err{};
+		Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, entry->owner, &err);
+		if(err != HandleError_None) {
+			func->GetParentContext()->ReportError("Invalid KeyValues handle %x (error %d).", hndl, err);
+			return false;
+		}
+
 		func->PushCell(entry->hndl);
-		Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, entry->owner);
 		func->PushCell(hndl);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -172,6 +178,17 @@ public:
 		if(!func) {
 			return false;
 		}
+
+		Handle_t hndl = 0;
+		ICellArray *arr = nullptr;
+		if(result) {
+			HandleError err{};
+			hndl = ((HandleSystemHack *)handlesys)->CreateCellArrayHandle(arr, entry->owner, &err);
+			if(err != HandleError_None) {
+				func->GetParentContext()->ReportError("Invalid ArrayList handle %x (error %d).", hndl, err);
+				return false;
+			}
+		}
 		
 		func->PushCell(entry->hndl);
 		cell_t vec[3];
@@ -179,11 +196,6 @@ public:
 		vec[1] = sp_ftoc(here.y);
 		vec[2] = sp_ftoc(here.z);
 		func->PushArray(vec, 3);
-		Handle_t hndl = 0;
-		ICellArray *arr = nullptr;
-		if(result) {
-			hndl = ((HandleSystemHack *)handlesys)->CreateCellArrayHandle(arr, entry->owner);
-		}
 		func->PushCell(hndl);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -387,6 +399,7 @@ DETOUR_DECL_STATIC2(ParseSpawner, IPopulationSpawner *, IPopulator *, populator,
 		IPopulationSpawner *spawner = new SPPopulationSpawner{entry, populator};
 		
 		if(!spawner->Parse(data)) {
+			Warning( "Warning reading %s spawner definition\n", name );
 			delete spawner;
 			spawner = nullptr;
 		}
