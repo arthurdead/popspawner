@@ -286,8 +286,10 @@ public:
 		}
 		
 		int len = popspawner_maxiconlen.GetInt();
+		if(len < 2) len = 2;
+
 		char *str = new char[len];
-		strcpy(str, "");
+		str[0] = '\0';
 		
 		func->PushCell(entry->hndl);
 		func->PushCell(nSpawnNum);
@@ -297,6 +299,7 @@ public:
 		func->Execute(&res);
 		
 		if(!res) {
+			delete[] str;
 			return NULL_STRING;
 		}
 		
