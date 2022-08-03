@@ -132,7 +132,7 @@ public:
 	SPPopulationSpawner(pop_entry_t *entry_, IPopulator *populator_)
 		: IPopulationSpawner{populator_}, entry{entry_}
 	{
-		popspawnermap[entry] = this;
+		popspawnermap.emplace(entry, this);
 	}
 	
 	~SPPopulationSpawner()
@@ -368,7 +368,7 @@ pop_entry_map_t poentrypmap{};
 pop_entry_t::pop_entry_t(const std::string &name_)
 	: name{name_}
 {
-	poentrypmap[name] = this;
+	poentrypmap.emplace(name, this);
 }
 
 pop_entry_t::~pop_entry_t()
