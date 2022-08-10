@@ -3,6 +3,8 @@
 #endif
 #define popspawner_included
 
+#include <tf2>
+
 enum AttributeType
 {
 	REMOVE_ON_DEATH				= 1<<0,					// kick bot from server when killed
@@ -35,29 +37,14 @@ enum AttributeType
 	PROJECTILE_SHIELD			= 1<<27,				// medic projectile shield
 };
 
-typeset popspawner_functions
-{
-	//Parse
-	function bool (CustomPopulationSpawner spawner, KeyValues data);
-
-	//Spawn
-	function bool (CustomPopulationSpawner spawner, float pos[3], ArrayList result);
-
-	//HasEventChangeAttributes
-	function bool (CustomPopulationSpawner spawner, const char[] name);
-
-	//GetClass, GetHealth
-	function int (CustomPopulationSpawner spawner, int num);
-
-	//GetClassIcon
-	function bool (CustomPopulationSpawner spawner, int num, char[] str, int len);
-
-	//IsMiniBoss
-	function bool (CustomPopulationSpawner spawner, int num);
-
-	//HasAttribute
-	function bool (CustomPopulationSpawner spawner, AttributeType attr, int num);
-};
+typedef parse_func_t = function bool (CustomPopulationSpawner spawner, KeyValues data);
+typedef spawn_func_t = function bool (CustomPopulationSpawner spawner, const float pos[3], ArrayList result);
+typedef eventchange_func_t = function bool (CustomPopulationSpawner spawner, const char[] name);
+typedef class_func_t = function TFClassType (CustomPopulationSpawner spawner, int num);
+typedef health_func_t = function int (CustomPopulationSpawner spawner, int num);
+typedef classicon_func_t = function bool (CustomPopulationSpawner spawner, int num, char[] str, int len);
+typedef miniboss_func_t = function bool (CustomPopulationSpawner spawner, int num);
+typedef attr_func_t = function bool (CustomPopulationSpawner spawner, AttributeType attr, int num);
 
 methodmap IPopulator
 {
@@ -68,44 +55,44 @@ methodmap IPopulator
 
 methodmap CustomPopulationSpawner
 {
-	property popspawner_functions Parse
+	property parse_func_t Parse
 	{
-		public native set(popspawner_functions func);
+		public native set(parse_func_t func);
 	}
 
-	property popspawner_functions Spawn
+	property spawn_func_t Spawn
 	{
-		public native set(popspawner_functions func);
+		public native set(spawn_func_t func);
 	}
 
-	property popspawner_functions HasEventChangeAttributes
+	property eventchange_func_t HasEventChangeAttributes
 	{
-		public native set(popspawner_functions func);
+		public native set(eventchange_func_t func);
 	}
 
-	property popspawner_functions GetClass
+	property class_func_t GetClass
 	{
-		public native set(popspawner_functions func);
+		public native set(class_func_t func);
 	}
 
-	property popspawner_functions GetHealth
+	property health_func_t GetHealth
 	{
-		public native set(popspawner_functions func);
+		public native set(health_func_t func);
 	}
 
-	property popspawner_functions GetClassIcon
+	property classicon_func_t GetClassIcon
 	{
-		public native set(popspawner_functions func);
+		public native set(classicon_func_t func);
 	}
 
-	property popspawner_functions IsMiniBoss
+	property miniboss_func_t IsMiniBoss
 	{
-		public native set(popspawner_functions func);
+		public native set(miniboss_func_t func);
 	}
 
-	property popspawner_functions HasAttribute
+	property attr_func_t HasAttribute
 	{
-		public native set(popspawner_functions func);
+		public native set(attr_func_t func);
 	}
 
 	property bool WhereRequired
