@@ -37,6 +37,9 @@ enum AttributeType
 	PROJECTILE_SHIELD			= 1<<27,				// medic projectile shield
 };
 
+#define NPC_POP_FLAGS (REMOVE_ON_DEATH|AGGRESSIVE|IS_NPC|DISABLE_DODGE|IGNORE_FLAG)
+#define BOSS_NPC_POP_FLAGS (NPC_POP_FLAGS|MINIBOSS|USE_BOSS_HEALTH_BAR)
+
 typedef parse_func_t = function bool (CustomPopulationSpawner spawner, KeyValues data);
 typedef spawn_func_t = function bool (CustomPopulationSpawner spawner, const float pos[3], ArrayList result);
 typedef eventchange_func_t = function bool (CustomPopulationSpawner spawner, const char[] name);
@@ -115,6 +118,10 @@ methodmap CustomPopulationSpawner
 };
 
 native CustomPopulationSpawner register_popspawner(const char[] name);
+
+native bool IsSpaceToSpawnHere(const float pos[3]);
+
+forward Action find_spawn_location(float pos[3]);
 
 #if !defined REQUIRE_EXTENSIONS
 public void __ext_popspawner_SetNTVOptional()

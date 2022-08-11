@@ -2,6 +2,13 @@
 {
 	"tf"
 	{
+		"Offsets"
+		{
+			"CBaseCombatCharacter::Event_Killed"
+			{
+				"linux" "67"
+			}
+		}
 		"Signatures"
 		{
 			"IPopulationSpawner::ParseSpawner"
@@ -13,6 +20,16 @@
 			{
 				"library" "server"
 				"linux" "@_Z17AllocPooledStringPKc"
+			}
+			"CSpawnLocation::FindSpawnLocation"
+			{
+				"library" "server"
+				"linux" "@_ZN14CSpawnLocation17FindSpawnLocationER6Vector"
+			}
+			"IsSpaceToSpawnHere"
+			{
+				"library" "server"
+				"linux" "@_Z18IsSpaceToSpawnHereRK6Vector"
 			}
 		}
 	}

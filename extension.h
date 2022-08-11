@@ -47,6 +47,8 @@
 class Sample : public SDKExtension, public IHandleTypeDispatch, public IPluginsListener, public IConCommandBaseAccessor
 {
 public:
+	virtual void OnCoreMapStart(edict_t *pEdictList, int edictCount, int clientMax);
+
 	virtual void OnHandleDestroy(HandleType_t type, void *object);
 	virtual void OnPluginUnloaded(IPlugin *plugin);
 	
