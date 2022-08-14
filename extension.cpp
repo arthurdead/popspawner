@@ -546,8 +546,6 @@ pop_entry_t::pop_entry_t(std::string &&name_)
 
 pop_entry_t::~pop_entry_t()
 {
-	poentrypmap.erase(name);
-	
 	pop_spawner_map_t::iterator it{popspawnermap.begin()};
 	while(it != popspawnermap.end()) {
 		SPPopulationSpawner *ptr{it->second};
@@ -560,6 +558,8 @@ pop_entry_t::~pop_entry_t()
 		
 		++it;
 	}
+
+	poentrypmap.erase(name);
 }
 
 class CTakeDamageInfo;
