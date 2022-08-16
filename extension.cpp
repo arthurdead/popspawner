@@ -851,6 +851,15 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 				pObjectiveResource->SetMannVsMachineWaveClassActive(icon);
 			}
 
+			int ref = gamehelpers->EntityToBCompatRef(pEntity);
+
+			if(entpopdata.find(ref) != entpopdata.cend()) {
+				continue;
+			}
+
+			SH_ADD_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
+			SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), true);
+
 			entpopdata_t data;
 			data.icon = icon;
 			for(int j = 0; j < NUM_BOT_ATTRS; ++j) {
@@ -859,11 +868,6 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 					data.attrs |= attr;
 				}
 			}
-
-			SH_ADD_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
-			SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), true);
-
-			int ref = gamehelpers->EntityToBCompatRef(pEntity);
 
 			entpopdata.emplace(ref, std::move(data));
 		}
