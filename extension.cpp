@@ -206,10 +206,10 @@ IPopulator::~IPopulator()
 struct pop_entry_t;
 class SPPopulationSpawner;
 
+using spvarmap_t = std::unordered_map<std::string, std::vector<cell_t>>;
+
 using pop_spawner_map_t = std::unordered_map<std::string, SPPopulationSpawner *>;
 pop_spawner_map_t popspawnermap{};
-
-using data_map_t = std::unordered_map<std::string, cell_t>;
 
 struct pop_entry_t
 {
@@ -224,13 +224,12 @@ struct pop_entry_t
 	IPluginFunction *GetClassIcon = nullptr;
 	IPluginFunction *IsMiniBoss = nullptr;
 	IPluginFunction *HasAttribute = nullptr;
+	IPluginFunction *Delete = nullptr;
 	bool WhereRequired = true;
 	bool IsVarious = false;
 	std::string name{};
 	IdentityToken_t *owner = nullptr;
 	Handle_t hndl = BAD_HANDLE;
-	data_map_t data{};
-	IPopulator *populator = nullptr;
 };
 
 #include "icandowhateveriwantthefactthattheresnowaytodothisstillisridiculous.h"
@@ -245,12 +244,21 @@ public:
 	{
 		popspawnermap.emplace(name, this);
 	}
+
+	void deleted()
+	{
+		if(entry) {
+			IPluginFunction *func = entry->Delete;
+			if(func) {
+				func->PushCell((cell_t)this);
+				func->Execute(nullptr);
+			}
+		}
+	}
 	
 	~SPPopulationSpawner()
 	{
-		if(entry) {
-			entry->populator = nullptr;
-		}
+		deleted();
 		if(m_populator) {
 			m_populator->m_spawner = nullptr;
 		}
@@ -277,7 +285,7 @@ public:
 			return false;
 		}
 
-		func->PushCell(entry->hndl);
+		func->PushCell((cell_t)this);
 		func->PushCell(hndl);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -308,7 +316,7 @@ public:
 			}
 		}
 		
-		func->PushCell(entry->hndl);
+		func->PushCell((cell_t)this);
 		cell_t vec[3];
 		vec[0] = sp_ftoc(here.x);
 		vec[1] = sp_ftoc(here.y);
@@ -346,7 +354,7 @@ public:
 			return false;
 		}
 		
-		func->PushCell(entry->hndl);
+		func->PushCell((cell_t)this);
 		func->PushString(pszEventName);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -365,7 +373,7 @@ public:
 			return TF_CLASS_UNDEFINED;
 		}
 		
-		func->PushCell(entry->hndl);
+		func->PushCell((cell_t)this);
 		func->PushCell(nSpawnNum);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -383,7 +391,7 @@ public:
 		if(!func) {
 			func = entry->GetClass;
 			if(func) {
-				func->PushCell(entry->hndl);
+				func->PushCell((cell_t)this);
 				func->PushCell(nSpawnNum);
 				cell_t res = 0;
 				func->Execute(&res);
@@ -402,7 +410,7 @@ public:
 			return 0;
 		}
 		
-		func->PushCell(entry->hndl);
+		func->PushCell((cell_t)this);
 		func->PushCell(nSpawnNum);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -420,7 +428,7 @@ public:
 		if(!func) {
 			func = entry->GetClass;
 			if(func) {
-				func->PushCell(entry->hndl);
+				func->PushCell((cell_t)this);
 				func->PushCell(nSpawnNum);
 				cell_t res = 0;
 				func->Execute(&res);
@@ -445,7 +453,7 @@ public:
 		char *str = new char[len];
 		str[0] = '\0';
 		
-		func->PushCell(entry->hndl);
+		func->PushCell((cell_t)this);
 		func->PushCell(nSpawnNum);
 		func->PushStringEx(str, len, SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
 		func->PushCell(len);
@@ -474,7 +482,7 @@ public:
 		if(!func) {
 			func = entry->HasAttribute;
 			if(func) {
-				func->PushCell(entry->hndl);
+				func->PushCell((cell_t)this);
 				func->PushCell(MINIBOSS);
 				func->PushCell(nSpawnNum);
 				cell_t res = 0;
@@ -484,7 +492,7 @@ public:
 			return false;
 		}
 		
-		func->PushCell(entry->hndl);
+		func->PushCell((cell_t)this);
 		func->PushCell(nSpawnNum);
 		cell_t res = 0;
 		func->Execute(&res);
@@ -502,7 +510,7 @@ public:
 		if(!func) {
 			func = entry->IsMiniBoss;
 			if(func && type == MINIBOSS) {
-				func->PushCell(entry->hndl);
+				func->PushCell((cell_t)this);
 				func->PushCell(nSpawnNum);
 				cell_t res = 0;
 				func->Execute(&res);
@@ -511,7 +519,7 @@ public:
 			return false;
 		}
 		
-		func->PushCell(entry->hndl);
+		func->PushCell((cell_t)this);
 		func->PushCell(type);
 		func->PushCell(nSpawnNum);
 		cell_t res = 0;
@@ -529,7 +537,8 @@ public:
 	{
 		return entry ? entry->IsVarious : false;
 	}
-	
+
+	spvarmap_t data{};
 	pop_entry_t *entry = nullptr;
 	std::string name;
 	bool erase{true};
@@ -550,6 +559,7 @@ pop_entry_t::~pop_entry_t()
 	while(it != popspawnermap.end()) {
 		SPPopulationSpawner *ptr{it->second};
 		if(ptr->entry == this) {
+			ptr->deleted();
 			ptr->entry = nullptr;
 			ptr->erase = false;
 			it = popspawnermap.erase(it);
@@ -888,7 +898,6 @@ DETOUR_DECL_STATIC2(ParseSpawner, IPopulationSpawner *, IPopulator *, populator,
 		};
 		if(it != poentrypmap.end()) {
 			pop_entry_t *entry = it->second;
-			entry->populator = populator;
 			spawner = new SPPopulationSpawner{entry, populator};
 			
 			if(!spawner->Parse(data)) {
@@ -924,6 +933,27 @@ cell_t register_popspawner(IPluginContext *pContext, const cell_t *params)
 	obj->owner = pContext->GetIdentity();
 	obj->hndl = handlesys->CreateHandle(popspawner_handle, obj, pContext->GetIdentity(), myself->GetIdentity(), nullptr);
 	return obj->hndl;
+}
+
+cell_t create_spawner(IPluginContext *pContext, const cell_t *params)
+{
+	char *name_ptr = nullptr;
+	pContext->LocalToString(params[1], &name_ptr);
+
+	if(params[3] != BAD_HANDLE) {
+		HandleError err{};
+		KeyValues *pKv = smutils->ReadKeyValuesHandle(params[3], &err);
+		if(err != HandleError_None) {
+			return pContext->ThrowNativeError("Invalid KeyValues handle %x (error %d).", params[3], err);
+		}
+
+		return (cell_t)ParseSpawner((IPopulator *)params[2], pKv);
+	} else {
+		KeyValues *pKv = new KeyValues{name_ptr};
+		cell_t ret = (cell_t)ParseSpawner((IPopulator *)params[2], pKv);
+		pKv->deleteThis();
+		return ret;
+	}
 }
 
 cell_t Parseset(IPluginContext *pContext, const cell_t *params)
@@ -1086,7 +1116,7 @@ cell_t IsVariousset(IPluginContext *pContext, const cell_t *params)
 	return 0;
 }
 
-cell_t Populatorget(IPluginContext *pContext, const cell_t *params)
+cell_t Deleteset(IPluginContext *pContext, const cell_t *params)
 {
 	HandleSecurity security(pContext->GetIdentity(), myself->GetIdentity());
 	
@@ -1097,55 +1127,114 @@ cell_t Populatorget(IPluginContext *pContext, const cell_t *params)
 		return pContext->ThrowNativeError("Invalid Handle %x (error: %d)", params[1], err);
 	}
 	
-	return (cell_t)obj->populator;
+	obj->Delete = pContext->GetFunctionById(params[2]);
+	
+	return 0;
 }
 
 cell_t set_data(IPluginContext *pContext, const cell_t *params)
 {
-	HandleSecurity security(pContext->GetIdentity(), myself->GetIdentity());
+	SPPopulationSpawner *obj{(SPPopulationSpawner *)params[1]};
+	spvarmap_t &data = obj->data;
+
+	char *name = nullptr;
+	pContext->LocalToString(params[2], &name);
 	
-	pop_entry_t *obj = nullptr;
-	HandleError err = handlesys->ReadHandle(params[1], popspawner_handle, &security, (void **)&obj);
-	if(err != HandleError_None)
-	{
-		return pContext->ThrowNativeError("Invalid Handle %x (error: %d)", params[1], err);
+	auto it{data.find(name)};
+	if(it == data.end()) {
+		it = data.emplace(spvarmap_t::value_type{name, {}}).first;
 	}
 	
-	char *name_ptr = nullptr;
-	pContext->LocalToString(params[2], &name_ptr);
-	std::string name{name_ptr};
-	
-	data_map_t::iterator it{obj->data.find(name)};
-	if(it == obj->data.end()) {
-		it = obj->data.emplace(data_map_t::value_type{std::move(name), 0}).first;
+	std::vector<cell_t> &vec = it->second;
+	if(vec.size() == 0) {
+		vec.resize(1);
 	}
 	
-	it->second = params[3];
+	vec[0] = params[3];
 	
 	return 0;
 }
 
 cell_t get_data(IPluginContext *pContext, const cell_t *params)
 {
-	HandleSecurity security(pContext->GetIdentity(), myself->GetIdentity());
+	SPPopulationSpawner *obj{(SPPopulationSpawner *)params[1]};
+	spvarmap_t &data = obj->data;
+
+	char *name = nullptr;
+	pContext->LocalToString(params[2], &name);
 	
-	pop_entry_t *obj = nullptr;
-	HandleError err = handlesys->ReadHandle(params[1], popspawner_handle, &security, (void **)&obj);
-	if(err != HandleError_None)
-	{
-		return pContext->ThrowNativeError("Invalid Handle %x (error: %d)", params[1], err);
+	auto it{data.find(name)};
+	if(it == data.end() || it->second.size() == 0) {
+		return pContext->ThrowNativeError("theres no data with the name %s", name);
 	}
 	
-	char *name_ptr = nullptr;
-	pContext->LocalToString(params[2], &name_ptr);
-	std::string name{name_ptr};
+	return it->second[0];
+}
+
+cell_t has_data(IPluginContext *pContext, const cell_t *params)
+{
+	SPPopulationSpawner *obj{(SPPopulationSpawner *)params[1]};
+	spvarmap_t &data = obj->data;
+
+	char *name = nullptr;
+	pContext->LocalToString(params[2], &name);
 	
-	data_map_t::iterator it{obj->data.find(name)};
-	if(it == obj->data.end()) {
-		return pContext->ThrowNativeError("theres no data with the name %s", name_ptr);
+	auto it{data.find(name)};
+	return (it != data.end() && it->second.size() > 0);
+}
+
+cell_t set_data_array(IPluginContext *pContext, const cell_t *params)
+{
+	SPPopulationSpawner *obj{(SPPopulationSpawner *)params[1]};
+	spvarmap_t &data = obj->data;
+
+	char *name = nullptr;
+	pContext->LocalToString(params[2], &name);
+	
+	auto it{data.find(name)};
+	if(it == data.end()) {
+		it = data.emplace(spvarmap_t::value_type{name, {}}).first;
 	}
 	
-	return it->second;
+	std::vector<cell_t> &vec = it->second;
+	
+	cell_t *addr = nullptr;
+	pContext->LocalToPhysAddr(params[3], &addr);
+	
+	size_t len = params[4];
+	vec.resize(len);
+	for(int i = 0; i < len; ++i) {
+		vec[i] = addr[i];
+	}
+	
+	return 0;
+}
+
+cell_t get_data_array(IPluginContext *pContext, const cell_t *params)
+{
+	SPPopulationSpawner *obj{(SPPopulationSpawner *)params[1]};
+	spvarmap_t &data = obj->data;
+
+	char *name = nullptr;
+	pContext->LocalToString(params[2], &name);
+	
+	auto it{data.find(name)};
+	if(it == data.end()) {
+		it = data.emplace(spvarmap_t::value_type{name, {}}).first;
+	}
+	
+	std::vector<cell_t> &vec = it->second;
+	
+	cell_t *addr = nullptr;
+	pContext->LocalToPhysAddr(params[3], &addr);
+	
+	size_t len = params[4];
+	vec.resize(len);
+	for(int i = 0; i < len; ++i) {
+		addr[i] = vec[i];
+	}
+	
+	return 0;
 }
 
 cell_t IsSpaceToSpawnHere(IPluginContext *pContext, const cell_t *params)
@@ -1158,23 +1247,159 @@ cell_t IsSpaceToSpawnHere(IPluginContext *pContext, const cell_t *params)
 	return ((bool(*)(const Vector &))IsSpaceToSpawnHerePtr)( vec );
 }
 
+cell_t IPopulationSpawnerParse(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+
+	HandleError err{};
+	KeyValues *pKv = smutils->ReadKeyValuesHandle(params[2], &err);
+	if(err != HandleError_None) {
+		return pContext->ThrowNativeError("Invalid KeyValues handle %x (error %d).", params[2], err);
+	}
+
+	return obj->Parse(pKv);
+}
+
+cell_t IPopulationSpawnerSpawn(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+
+	cell_t *addr = nullptr;
+	pContext->LocalToPhysAddr(params[2], &addr);
+
+	Vector here{sp_ctof(addr[0]), sp_ctof(addr[1]), sp_ctof(addr[2])};
+
+	if(params[3] != BAD_HANDLE) {
+		HandleSecurity security(pContext->GetIdentity(), myself->GetIdentity());
+		
+		ICellArray *arr = nullptr;
+		HandleError err = ((HandleSystemHack *)handlesys)->ReadCoreHandle(params[3], arraylist_handle, &security, (void **)&arr);
+		if(err != HandleError_None)
+		{
+			return pContext->ThrowNativeError("Invalid Handle %x (error: %d)", params[3], err);
+		}
+
+		EntityHandleVector_t result;
+		bool res = obj->Spawn(here, &result);
+		size_t res_len{result.Count()};
+		size_t arr_len = arr->size();
+		size_t start{arr_len};
+		arr_len += res_len;
+		arr->resize(arr_len);
+		for(size_t i{0}; i < res_len; ++i) {
+			const CHandle<CBaseEntity> &it{result[i]};
+
+			*arr->at(start + i) = gamehelpers->ReferenceToBCompatRef(it.GetEntryIndex());
+		}
+		return res;
+	} else {
+		return obj->Spawn(here, nullptr);
+	}
+}
+
+cell_t IPopulationSpawnerWhereRequiredget(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	return obj->IsWhereRequired();
+}
+
+cell_t IPopulationSpawnerVariousget(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	return obj->IsVarious();
+}
+
+cell_t IPopulationSpawnerPopulatorget(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	return (cell_t)obj->GetPopulator();
+}
+
+cell_t IPopulationSpawnerGetClass(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	return obj->GetClass(params[2]);
+}
+
+cell_t IPopulationSpawnerGetHealth(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	return obj->GetHealth(params[2]);
+}
+
+cell_t IPopulationSpawnerIsMiniBoss(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	return obj->IsMiniBoss(params[2]);
+}
+
+cell_t IPopulationSpawnerHasAttribute(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	return obj->HasAttribute((AttributeType)params[2], params[3]);
+}
+
+cell_t IPopulationSpawnerHasEventChangeAttributes(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+
+	char *name_ptr = nullptr;
+	pContext->LocalToString(params[2], &name_ptr);
+
+	return obj->HasEventChangeAttributes(name_ptr);
+}
+
+cell_t IPopulationSpawnerGetClassIcon(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+
+	string_t icon{obj->GetClassIcon(params[4])};
+
+	size_t written = 0;
+	pContext->StringToLocalUTF8(params[2], params[3], STRING(icon), &written);
+
+	return written;
+}
+
+cell_t IPopulationSpawnerDelete(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	delete obj;
+	return 0;
+}
+
 sp_nativeinfo_t natives[] =
 {
-	{"CustomPopulationSpawner.Parse.set", Parseset},
-	{"CustomPopulationSpawner.Spawn.set", Spawnset},
-	{"CustomPopulationSpawner.HasEventChangeAttributes.set", HasEventChangeAttributesset},
-	{"CustomPopulationSpawner.GetClass.set", GetClassset},
-	{"CustomPopulationSpawner.GetHealth.set", GetHealthset},
-	{"CustomPopulationSpawner.GetClassIcon.set", GetClassIconset},
-	{"CustomPopulationSpawner.IsMiniBoss.set", IsMiniBossset},
-	{"CustomPopulationSpawner.HasAttribute.set", HasAttributeset},
-	{"CustomPopulationSpawner.WhereRequired.set", WhereRequiredset},
-	{"CustomPopulationSpawner.IsVarious.set", IsVariousset},
-	{"CustomPopulationSpawner.Populator.get", Populatorget},
 	{"CustomPopulationSpawner.set_data", set_data},
 	{"CustomPopulationSpawner.get_data", get_data},
+	{"CustomPopulationSpawner.has_data", has_data},
+	{"CustomPopulationSpawner.set_data_array", set_data_array},
+	{"CustomPopulationSpawner.get_data_array", get_data_array},
+	{"CustomPopulationSpawnerEntry.Parse.set", Parseset},
+	{"CustomPopulationSpawnerEntry.Spawn.set", Spawnset},
+	{"CustomPopulationSpawnerEntry.HasEventChangeAttributes.set", HasEventChangeAttributesset},
+	{"CustomPopulationSpawnerEntry.GetClass.set", GetClassset},
+	{"CustomPopulationSpawnerEntry.GetHealth.set", GetHealthset},
+	{"CustomPopulationSpawnerEntry.GetClassIcon.set", GetClassIconset},
+	{"CustomPopulationSpawnerEntry.IsMiniBoss.set", IsMiniBossset},
+	{"CustomPopulationSpawnerEntry.HasAttribute.set", HasAttributeset},
+	{"CustomPopulationSpawnerEntry.WhereRequired.set", WhereRequiredset},
+	{"CustomPopulationSpawnerEntry.IsVarious.set", IsVariousset},
+	{"CustomPopulationSpawnerEntry.Delete.set", Deleteset},
 	{"register_popspawner", register_popspawner},
+	{"create_spawner", create_spawner},
 	{"IsSpaceToSpawnHere", IsSpaceToSpawnHere},
+	{"IPopulationSpawner.Parse", IPopulationSpawnerParse},
+	{"IPopulationSpawner.Spawn", IPopulationSpawnerSpawn},
+	{"IPopulationSpawner.WhereRequired.get", IPopulationSpawnerWhereRequiredget},
+	{"IPopulationSpawner.Various.get", IPopulationSpawnerVariousget},
+	{"IPopulationSpawner.GetClass", IPopulationSpawnerGetClass},
+	{"IPopulationSpawner.GetHealth", IPopulationSpawnerGetHealth},
+	{"IPopulationSpawner.IsMiniBoss", IPopulationSpawnerIsMiniBoss},
+	{"IPopulationSpawner.HasAttribute", IPopulationSpawnerHasAttribute},
+	{"IPopulationSpawner.GetClassIcon", IPopulationSpawnerGetClassIcon},
+	{"IPopulationSpawner.Populator.get", IPopulationSpawnerPopulatorget},
+	{"IPopulationSpawner.Delete", IPopulationSpawnerDelete},
 	{NULL, NULL}
 };
 

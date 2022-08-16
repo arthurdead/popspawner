@@ -48,15 +48,61 @@ typedef health_func_t = function int (CustomPopulationSpawner spawner, int num);
 typedef classicon_func_t = function bool (CustomPopulationSpawner spawner, int num, char[] str, int len);
 typedef miniboss_func_t = function bool (CustomPopulationSpawner spawner, int num);
 typedef attr_func_t = function bool (CustomPopulationSpawner spawner, AttributeType attr, int num);
+typedef del_func_t = function void (CustomPopulationSpawner spawner);
 
 methodmap IPopulator
 {
 
 };
 
-#define IPopulator_Null (view_as<IPopulator>(Address_null))
+methodmap IPopulationSpawner
+{
+	public native bool Parse(KeyValues data);
+	public native bool Spawn(const float here[3], ArrayList result = null);
 
-methodmap CustomPopulationSpawner
+	property bool WhereRequired
+	{
+		public native get();
+	}
+
+	property bool Various
+	{
+		public native get();
+	}
+
+	public native TFClassType GetClass(int nSpawnNum = -1);
+	public native int GetClassIcon(char[] icon, int len, int nSpawnNum = -1);
+	public native int GetHealth(int nSpawnNum = -1);
+	public native bool IsMiniBoss(int nSpawnNum = -1);
+	public native bool HasAttribute(AttributeType type, int nSpawnNum = -1);
+	public native bool HasEventChangeAttributes(const char[] pszEventName);
+
+	property IPopulator Populator
+	{
+		public native get();
+	}
+
+	public native void Delete();
+};
+
+#define IPopulationSpawner_Null (view_as<IPopulationSpawner>(Address_Null))
+
+methodmap CustomPopulationSpawner < IPopulationSpawner
+{
+	public native void set_data(const char[] name, any data);
+	public native any get_data(const char[] name);
+	public native bool has_data(const char[] name);
+	
+	public native void set_data_array(const char[] name, any[] data, int len);
+	public native void get_data_array(const char[] name, any[] data, int len);
+
+	/*property CustomPopulationSpawnerEntry Entry
+	{
+		public native get();
+	}*/
+};
+
+methodmap CustomPopulationSpawnerEntry
 {
 	property parse_func_t Parse
 	{
@@ -108,16 +154,14 @@ methodmap CustomPopulationSpawner
 		public native set(bool func);
 	}
 
-	property IPopulator Populator
+	property del_func_t Delete
 	{
-		public native get();
+		public native set(del_func_t func);
 	}
-
-	public native void set_data(const char[] name, any data);
-	public native any get_data(const char[] name);
 };
 
-native CustomPopulationSpawner register_popspawner(const char[] name);
+native CustomPopulationSpawnerEntry register_popspawner(const char[] name);
+native IPopulationSpawner create_spawner(const char[] name, IPopulator populator, KeyValues data = null);
 
 native bool IsSpaceToSpawnHere(const float pos[3]);
 
