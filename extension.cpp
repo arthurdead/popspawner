@@ -254,6 +254,7 @@ public:
 				func->Execute(nullptr);
 			}
 		}
+		entry = nullptr;
 	}
 	
 	~SPPopulationSpawner()
