@@ -583,6 +583,7 @@ struct entpopdata_t
 {
 	string_t icon{NULL_STRING};
 	int attrs{0};
+	bool killed{false};
 };
 
 static std::unordered_map<int, entpopdata_t> entpopdata{};
@@ -792,9 +793,11 @@ static void hook_entity_killed(const CTakeDamageInfo &info)
 
 	auto it{entpopdata.find(ref)};
 	if(it != entpopdata.cend()) {
+		entpopdata_t &data{it->second};
+
 		CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
 		if(pObjectiveResource) {
-			const entpopdata_t &data{it->second};
+			data.killed = true;
 			pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.attrs);
 		}
 
@@ -810,7 +813,19 @@ static void hook_entity_dtor()
 
 	int ref = gamehelpers->EntityToBCompatRef(pEntity);
 
-	entpopdata.erase(ref);
+	auto it{entpopdata.find(ref)};
+	if(it != entpopdata.cend()) {
+		entpopdata_t &data{it->second};
+
+		if(!data.killed) {
+			CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
+			if(pObjectiveResource) {
+				pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.attrs);
+			}
+		}
+
+		entpopdata.erase(it);
+	}
 
 	SH_REMOVE_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), false);
 	SH_REMOVE_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
@@ -882,7 +897,7 @@ static void hook_spawner_dtor()
 	IPopulationSpawner *spawner = META_IFACEPTR(IPopulationSpawner);
 
 	SH_REMOVE_HOOK(IPopulationSpawner, Spawn, spawner, SH_STATIC(hook_spawner_spawn), true);
-	SH_REMOVE_MANUALHOOK(GenericDtor, spawner, SH_STATIC(hook_entity_dtor), false);
+	SH_REMOVE_MANUALHOOK(GenericDtor, spawner, SH_STATIC(hook_spawner_dtor), false);
 
 	RETURN_META(MRES_HANDLED);
 }
