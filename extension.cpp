@@ -801,7 +801,7 @@ static void hook_entity_killed(const CTakeDamageInfo &info)
 		//TODO!!!! drop money
 	}
 
-	RETURN_META(MRES_IGNORED);
+	RETURN_META(MRES_HANDLED);
 }
 
 static void hook_entity_dtor()
@@ -812,10 +812,10 @@ static void hook_entity_dtor()
 
 	entpopdata.erase(ref);
 
-	SH_REMOVE_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), true);
+	SH_REMOVE_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), false);
 	SH_REMOVE_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
 
-	RETURN_META(MRES_IGNORED);
+	RETURN_META(MRES_HANDLED);
 }
 
 static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
@@ -859,7 +859,7 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 			}
 
 			SH_ADD_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
-			SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), true);
+			SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), false);
 
 			entpopdata_t data;
 			data.icon = icon;
@@ -874,7 +874,7 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 		}
 	}
 
-	RETURN_META_VALUE(MRES_IGNORED, false);
+	RETURN_META_VALUE(MRES_HANDLED, false);
 }
 
 static void hook_spawner_dtor()
@@ -884,7 +884,7 @@ static void hook_spawner_dtor()
 	SH_REMOVE_HOOK(IPopulationSpawner, Spawn, spawner, SH_STATIC(hook_spawner_spawn), true);
 	SH_REMOVE_MANUALHOOK(GenericDtor, spawner, SH_STATIC(hook_entity_dtor), false);
 
-	RETURN_META(MRES_IGNORED);
+	RETURN_META(MRES_HANDLED);
 }
 
 DETOUR_DECL_STATIC2(ParseSpawner, IPopulationSpawner *, IPopulator *, populator, KeyValues *, data)
