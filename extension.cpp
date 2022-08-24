@@ -36,6 +36,10 @@
 #include <string_view>
 #include <cstring>
 
+#ifndef FMTFUNCTION
+#define FMTFUNCTION(...)
+#endif
+
 #include "extension.h"
 
 #include <CDetour/detours.h>
@@ -45,6 +49,14 @@
 using EHANDLE = CHandle<CBaseEntity>;
 #include <takedamageinfo.h>
 #include <toolframework/itoolentity.h>
+typedef wchar_t locchar_t;
+#include <tier1/utlmap.h>
+#include <vstdlib/random.h>
+#include <shareddefs.h>
+#include <util.h>
+#include <ServerNetworkProperty.h>
+#define DECLARE_PREDICTABLE()
+#include <collisionproperty.h>
 
 /**
  * @file extension.cpp
@@ -60,6 +72,64 @@ typedef CUtlVector< CHandle< CBaseEntity > > EntityHandleVector_t;
 void *AllocPooledStringPtr = nullptr;
 void *IsSpaceToSpawnHerePtr = nullptr;
 ICvar *icvar = nullptr;
+CBaseEntityList *g_pEntityList = nullptr;
+CGlobalVars *gpGlobals = nullptr;
+
+IServerTools *servertools = nullptr;
+IEntityFactoryDictionary *dictionary{nullptr};
+
+size_t info_populator_size{-1};
+
+template <typename R, typename T, typename ...Args>
+R call_mfunc(T *pThisPtr, void *offset, Args ...args)
+{
+	class VEmptyClass {};
+	
+	void **this_ptr = *reinterpret_cast<void ***>(&pThisPtr);
+	
+	union
+	{
+		R (VEmptyClass::*mfpnew)(Args...);
+#ifndef PLATFORM_POSIX
+		void *addr;
+	} u;
+	u.addr = offset;
+#else
+		struct  
+		{
+			void *addr;
+			intptr_t adjustor;
+		} s;
+	} u;
+	u.s.addr = offset;
+	u.s.adjustor = 0;
+#endif
+	
+	return (R)(reinterpret_cast<VEmptyClass *>(this_ptr)->*u.mfpnew)(args...);
+}
+
+template <typename R, typename T, typename ...Args>
+R call_vfunc(T *pThisPtr, size_t offset, Args ...args)
+{
+	void **vtable = *reinterpret_cast<void ***>(pThisPtr);
+	void *vfunc = vtable[offset];
+	
+	return call_mfunc<R, T, Args...>(pThisPtr, vfunc, args...);
+}
+
+template <typename R, typename T, typename ...Args>
+R call_vfunc(const T *pThisPtr, size_t offset, Args ...args)
+{
+	return call_vfunc<R, T, Args...>(const_cast<T *>(pThisPtr), offset, args...);
+}
+
+template <typename T>
+T void_to_func(void *ptr)
+{
+	union { T f; void *p; };
+	p = ptr;
+	return f;
+}
 
 enum
 {
@@ -119,6 +189,509 @@ enum AttributeType
 class CPopulationManager;
 class IPopulationSpawner;
 class CTFPlayer;
+class CBaseCombatCharacter;
+struct PlayerUpgradeHistory;
+class IPopulator;
+class CWave;
+class CMannVsMachineStats;
+class CWaveSpawnPopulator;
+
+#define MAX_ATTRIBUTE_DESCRIPTION_LENGTH		( 256 / sizeof( locchar_t ) )
+
+class CMvMBotUpgrade
+{
+public:
+	char	szAttrib[ MAX_ATTRIBUTE_DESCRIPTION_LENGTH ];	// Debug
+	int		iAttribIndex;	
+	float	flValue;
+	float	flMax;
+	int		nCost;
+	bool    bIsBotAttr;
+	bool	bIsSkillAttr;		// Probably want to make these an enum or flag later
+};
+
+void *CPopulationManagerOnPlayerKilled = nullptr;
+void *g_pPopulationManager{nullptr};
+
+CBaseEntity *CreateEntityByName( const char *szName )
+{
+	return servertools->CreateEntityByName(szName);
+}
+
+int DispatchSpawn( CBaseEntity *pEntity )
+{
+	servertools->DispatchSpawn(pEntity);
+	return 0;
+}
+
+int m_angRotationOffset = -1;
+int m_iParentAttachmentOffset = -1;
+int m_iEFlagsOffset = -1;
+int m_flSimulationTimeOffset = -1;
+int m_vecOriginOffset = -1;
+int m_hMoveChildOffset = -1;
+int m_hMoveParentOffset = -1;
+int m_hMovePeerOffset = -1;
+
+int CBaseEntitySetOwnerEntity = -1;
+int CBaseEntityWorldSpaceCenter = -1;
+
+float k_flMaxEntityEulerAngle = 360.0 * 1000.0f;
+float k_flMaxEntityPosCoord = MAX_COORD_FLOAT;
+
+inline bool IsEntityQAngleReasonable( const QAngle &q )
+{
+	float r = k_flMaxEntityEulerAngle;
+	return
+		q.x > -r && q.x < r &&
+		q.y > -r && q.y < r &&
+		q.z > -r && q.z < r;
+}
+
+inline bool IsEntityPositionReasonable( const Vector &v )
+{
+	float r = k_flMaxEntityPosCoord;
+	return
+		v.x > -r && v.x < r &&
+		v.y > -r && v.y < r &&
+		v.z > -r && v.z < r;
+}
+
+enum InvalidatePhysicsBits_t
+{
+	POSITION_CHANGED	= 0x1,
+	ANGLES_CHANGED		= 0x2,
+	VELOCITY_CHANGED	= 0x4,
+	ANIMATION_CHANGED	= 0x8,
+};
+
+void SetEdictStateChanged(CBaseEntity *pEntity, int offset);
+
+class CBaseEntity : public IServerEntity
+{
+public:
+	int entindex()
+	{
+		return gamehelpers->EntityToBCompatRef(this);
+	}
+
+	int GetParentAttachment()
+	{
+		if(m_iParentAttachmentOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_iParentAttachment", &info);
+			m_iParentAttachmentOffset = info.actual_offset;
+		}
+
+		return *(unsigned char *)(((unsigned char *)this) + m_iParentAttachmentOffset);
+	}
+
+	void DispatchUpdateTransmitState()
+	{
+
+	}
+
+	int GetIEFlags()
+	{
+		if(m_iEFlagsOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iEFlags", &info);
+			m_iEFlagsOffset = info.actual_offset;
+		}
+		
+		return *(int *)((unsigned char *)this + m_iEFlagsOffset);
+	}
+
+	void AddIEFlags(int flags)
+	{
+		if(m_iEFlagsOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iEFlags", &info);
+			m_iEFlagsOffset = info.actual_offset;
+		}
+
+		*(int *)((unsigned char *)this + m_iEFlagsOffset) |= flags;
+
+		if ( flags & ( EFL_FORCE_CHECK_TRANSMIT | EFL_IN_SKYBOX ) )
+		{
+			DispatchUpdateTransmitState();
+		}
+	}
+
+	CBaseEntity *FirstMoveChild()
+	{
+		if(m_hMoveChildOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_hMoveChild", &info);
+			m_hMoveChildOffset = info.actual_offset;
+		}
+
+		return (*(EHANDLE *)(((unsigned char *)this) + m_hMoveChildOffset)).Get();
+	}
+
+	CBaseEntity *GetMoveParent()
+	{
+		if(m_hMoveParentOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_hMoveParent", &info);
+			m_hMoveParentOffset = info.actual_offset;
+		}
+
+		return (*(EHANDLE *)(((unsigned char *)this) + m_hMoveParentOffset)).Get();
+	}
+
+	CBaseEntity *NextMovePeer()
+	{
+		if(m_hMovePeerOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_hMovePeer", &info);
+			m_hMovePeerOffset = info.actual_offset;
+		}
+
+		return (*(EHANDLE *)(((unsigned char *)this) + m_hMovePeerOffset)).Get();
+	}
+
+	CCollisionProperty		*CollisionProp() { return (CCollisionProperty		*)GetCollideable(); }
+	const CCollisionProperty*CollisionProp() const { return (const CCollisionProperty*)const_cast<CBaseEntity *>(this)->GetCollideable(); }
+
+	CServerNetworkProperty *NetworkProp() { return (CServerNetworkProperty *)GetNetworkable(); }
+	const CServerNetworkProperty *NetworkProp() const { return (const CServerNetworkProperty *)const_cast<CBaseEntity *>(this)->GetNetworkable(); }
+
+	void InvalidatePhysicsRecursive( int nChangeFlags )
+	{
+		// Main entry point for dirty flag setting for the 90% case
+		// 1) If the origin changes, then we have to update abstransform, Shadow projection, PVS, KD-tree, 
+		//    client-leaf system.
+		// 2) If the angles change, then we have to update abstransform, Shadow projection,
+		//    shadow render-to-texture, client-leaf system, and surrounding bounds. 
+		//	  Children have to additionally update absvelocity, KD-tree, and PVS.
+		//	  If the surrounding bounds actually update, when we also need to update the KD-tree and the PVS.
+		// 3) If it's due to attachment, then all children who are attached to an attachment point
+		//    are assumed to have dirty origin + angles.
+
+		// Other stuff:
+		// 1) Marking the surrounding bounds dirty will automatically mark KD tree + PVS dirty.
+		
+		int nDirtyFlags = 0;
+
+		if ( nChangeFlags & VELOCITY_CHANGED )
+		{
+			nDirtyFlags |= EFL_DIRTY_ABSVELOCITY;
+		}
+
+		if ( nChangeFlags & POSITION_CHANGED )
+		{
+			nDirtyFlags |= EFL_DIRTY_ABSTRANSFORM;
+
+	#ifndef CLIENT_DLL
+			NetworkProp()->MarkPVSInformationDirty();
+	#endif
+
+			// NOTE: This will also mark shadow projection + client leaf dirty
+			CollisionProp()->MarkPartitionHandleDirty();
+		}
+
+		// NOTE: This has to be done after velocity + position are changed
+		// because we change the nChangeFlags for the child entities
+		if ( nChangeFlags & ANGLES_CHANGED )
+		{
+			nDirtyFlags |= EFL_DIRTY_ABSTRANSFORM;
+			if ( CollisionProp()->DoesRotationInvalidateSurroundingBox() )
+			{
+				// NOTE: This will handle the KD-tree, surrounding bounds, PVS
+				// render-to-texture shadow, shadow projection, and client leaf dirty
+				CollisionProp()->MarkSurroundingBoundsDirty();
+			}
+			else
+			{
+	#ifdef CLIENT_DLL
+				MarkRenderHandleDirty();
+				g_pClientShadowMgr->AddToDirtyShadowList( this );
+				g_pClientShadowMgr->MarkRenderToTextureShadowDirty( GetShadowHandle() );
+	#endif
+			}
+
+			// This is going to be used for all children: children
+			// have position + velocity changed
+			nChangeFlags |= POSITION_CHANGED | VELOCITY_CHANGED;
+		}
+
+		AddIEFlags( nDirtyFlags );
+
+		// Set flags for children
+		bool bOnlyDueToAttachment = false;
+		if ( nChangeFlags & ANIMATION_CHANGED )
+		{
+	#ifdef CLIENT_DLL
+			g_pClientShadowMgr->MarkRenderToTextureShadowDirty( GetShadowHandle() );
+	#endif
+
+			// Only set this flag if the only thing that changed us was the animation.
+			// If position or something else changed us, then we must tell all children.
+			if ( !( nChangeFlags & (POSITION_CHANGED | VELOCITY_CHANGED | ANGLES_CHANGED) ) )
+			{
+				bOnlyDueToAttachment = true;
+			}
+
+			nChangeFlags = POSITION_CHANGED | ANGLES_CHANGED | VELOCITY_CHANGED;
+		}
+
+		for (CBaseEntity *pChild = FirstMoveChild(); pChild; pChild = pChild->NextMovePeer())
+		{
+			// If this is due to the parent animating, only invalidate children that are parented to an attachment
+			// Entities that are following also access attachments points on parents and must be invalidated.
+			if ( bOnlyDueToAttachment )
+			{
+	#ifdef CLIENT_DLL
+				if ( (pChild->GetParentAttachment() == 0) && !pChild->IsFollowingEntity() )
+					continue;
+	#else
+				if ( pChild->GetParentAttachment() == 0 )
+					continue;
+	#endif
+			}
+			pChild->InvalidatePhysicsRecursive( nChangeFlags );
+		}
+
+		//
+		// This code should really be in here, or the bone cache should not be in world space.
+		// Since the bone transforms are in world space, if we move or rotate the entity, its
+		// bones should be marked invalid.
+		//
+		// As it is, we're near ship, and don't have time to setup a good A/B test of how much
+		// overhead this fix would add. We've also only got one known case where the lack of
+		// this fix is screwing us, and I just fixed it, so I'm leaving this commented out for now.
+		//
+		// Hopefully, we'll put the bone cache in entity space and remove the need for this fix.
+		//
+		//#ifdef CLIENT_DLL
+		//	if ( nChangeFlags & (POSITION_CHANGED | ANGLES_CHANGED | ANIMATION_CHANGED) )
+		//	{
+		//		C_BaseAnimating *pAnim = GetBaseAnimating();
+		//		if ( pAnim )
+		//			pAnim->InvalidateBoneCache();		
+		//	}
+		//#endif
+	}
+
+	void SetLocalAngles( const QAngle& angles )
+	{
+		if(m_angRotationOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_angRotation", &info);
+			m_angRotationOffset = info.actual_offset;
+		}
+
+		// NOTE: The angle normalize is a little expensive, but we can save
+		// a bunch of time in interpolation if we don't have to invalidate everything
+		// and sometimes it's off by a normalization amount
+
+		// FIXME: The normalize caused problems in server code like momentary_rot_button that isn't
+		//        handling things like +/-180 degrees properly. This should be revisited.
+		//QAngle angleNormalize( AngleNormalize( angles.x ), AngleNormalize( angles.y ), AngleNormalize( angles.z ) );
+
+		// Safety check against NaN's or really huge numbers
+		if ( !IsEntityQAngleReasonable( angles ) )
+		{
+			return;
+		}
+
+		if (*(QAngle *)((unsigned char *)this + m_angRotationOffset) != angles)
+		{
+			InvalidatePhysicsRecursive( ANGLES_CHANGED );
+			*(QAngle *)((unsigned char *)this + m_angRotationOffset) = angles;
+			SetEdictStateChanged(this, m_angRotationOffset);
+			SetSimulationTime( gpGlobals->curtime );
+		}
+	}
+
+	void SetSimulationTime(float time)
+	{
+		if(m_flSimulationTimeOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_flSimulationTime", &info);
+			m_flSimulationTimeOffset = info.actual_offset;
+		}
+
+		*(float *)((unsigned char *)this + m_flSimulationTimeOffset) = time;
+		SetEdictStateChanged(this, m_flSimulationTimeOffset);
+	}
+
+	void SetLocalOrigin( const Vector& origin )
+	{
+		if(m_vecOriginOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_vecOrigin", &info);
+			m_vecOriginOffset = info.actual_offset;
+		}
+
+		// Safety check against NaN's or really huge numbers
+		if ( !IsEntityPositionReasonable( origin ) )
+		{
+			return;
+		}
+
+	//	if ( !origin.IsValid() )
+	//	{
+	//		AssertMsg( 0, "Bad origin set" );
+	//		return;
+	//	}
+
+		if (*(Vector *)((unsigned char *)this + m_vecOriginOffset) != origin)
+		{
+			InvalidatePhysicsRecursive( POSITION_CHANGED );
+			*(Vector *)((unsigned char *)this + m_vecOriginOffset) = origin;
+			SetEdictStateChanged(this, m_vecOriginOffset);
+			SetSimulationTime( gpGlobals->curtime );
+		}
+	}
+
+	void SetOwnerEntity( CBaseEntity* pOwner )
+	{
+		call_vfunc<void, CBaseEntity, CBaseEntity *>(this, CBaseEntitySetOwnerEntity, pOwner);
+	}
+
+	const Vector &WorldSpaceCenter( ) const
+	{
+		return call_vfunc<const Vector &>(this, CBaseEntityWorldSpaceCenter);
+	}
+
+	static CBaseEntity *CreateNoSpawn( const char *szName, const Vector &vecOrigin, const QAngle &vecAngles, CBaseEntity *pOwner = NULL )
+	{
+		CBaseEntity *pEntity{CreateEntityByName(szName)};
+
+		pEntity->SetLocalOrigin( vecOrigin );
+		pEntity->SetLocalAngles( vecAngles );
+		pEntity->SetOwnerEntity( pOwner );
+
+		return pEntity;
+	}
+};
+
+void CCollisionProperty::MarkSurroundingBoundsDirty()
+{
+	GetOuter()->AddIEFlags( EFL_DIRTY_SURROUNDING_COLLISION_BOUNDS );
+	MarkPartitionHandleDirty();
+
+#ifdef CLIENT_DLL
+	g_pClientShadowMgr->MarkRenderToTextureShadowDirty( GetOuter()->GetShadowHandle() );
+#else
+	GetOuter()->NetworkProp()->MarkPVSInformationDirty();
+#endif
+}
+
+void CCollisionProperty::MarkPartitionHandleDirty()
+{
+	// don't bother with the world
+	if ( m_pOuter->entindex() == 0 )
+		return;
+	
+	if ( !(m_pOuter->GetIEFlags() & EFL_DIRTY_SPATIAL_PARTITION) )
+	{
+		m_pOuter->AddIEFlags( EFL_DIRTY_SPATIAL_PARTITION );
+		//s_DirtyKDTree.AddEntity( m_pOuter );
+	}
+
+#ifdef CLIENT_DLL
+	GetOuter()->MarkRenderHandleDirty();
+	g_pClientShadowMgr->AddToDirtyShadowList( GetOuter() );
+#endif
+}
+
+class CPopulationManager : public CBaseEntity
+{
+public:
+	struct CPopulationManager_members_t
+	{
+		CUtlVector< IPopulator * > m_populatorVector;
+		char m_popfileFull[ MAX_PATH ];
+		char m_popfileShort[ MAX_PATH ];
+		
+		KeyValues	*m_pTemplates;
+
+		bool m_bIsInitialized;
+		bool m_bAllocatedBots;
+		
+		bool m_bBonusRound;
+		CHandle< CBaseCombatCharacter > m_hBonusBoss;
+
+		int m_nStartingCurrency;
+		int m_nLobbyBonusCurrency;
+		int m_nMvMEventPopfileType;
+		int m_nRespawnWaveTime;
+		bool m_bFixedRespawnWaveTime;
+		bool m_canBotsAttackWhileInSpawnRoom;
+		int m_sentryBusterDamageDealtThreshold;
+		int m_sentryBusterKillThreshold;
+
+		uint32	m_iCurrentWaveIndex;
+		CUtlVector< CWave * > m_waveVector;		// pointers to waves within m_populationVector
+
+		float m_flMapRestartTime;					// Restart the Map if gameover and this time elapses
+
+		CUtlVector< PlayerUpgradeHistory * > m_playerUpgrades;		// list of all players and their upgrades who have played on this MVM rotation
+
+		bool m_isRestoringCheckpoint;
+
+		bool m_bAdvancedPopFile;
+		bool m_bCheckForCurrencyAchievement;
+
+		CMannVsMachineStats *m_pMVMStats;
+		KeyValues *m_pKvpMvMMapCycle;
+
+		bool m_bSpawningPaused;
+		bool m_bIsWaveJumping;
+		bool m_bEndlessOn;
+		CUtlVector< CMvMBotUpgrade > m_BotUpgradesList;
+		CUtlVector< CMvMBotUpgrade > m_EndlessActiveBotUpgrades;
+		CUniformRandomStream m_randomizer;
+		CUtlVector< int > m_EndlessSeeds;
+		bool m_bShouldResetFlag;
+		CUtlVector< const CTFPlayer* > m_donePlayers;
+
+		CUtlString m_defaultEventChangeAttributesName;
+
+		// Respec
+		CUtlMap< uint64, int > m_PlayerRespecPoints;	// The number of upgrade respecs players (steamID) have
+		int m_nRespecsAwarded;
+		int m_nRespecsAwardedInWave;
+		int m_nCurrencyCollectedForRespec;
+
+		// Buyback
+		CUtlMap< uint64, int > m_PlayerBuybackPoints;	// The number of times a player can buyback
+	};
+
+	CPopulationManager_members_t &GetMembers()
+	{
+		return *(CPopulationManager_members_t *)(((unsigned char *)this) + (info_populator_size - sizeof(CPopulationManager_members_t)));
+	}
+
+	KeyValues *GetTemplate( const char *pszName )
+	{
+		CPopulationManager_members_t &members{GetMembers()};
+
+		return members.m_pTemplates->FindKey( pszName ); 
+	}
+
+	void OnPlayerKilled( CTFPlayer *corpse )
+	{
+		call_mfunc<void, CPopulationManager, CTFPlayer *>(this, CPopulationManagerOnPlayerKilled, corpse);
+	}
+};
+
+CPopulationManager *GetPopulationManager()
+{
+	return ((CPopulationManager *)g_pPopulationManager);
+}
 
 class IPopulator
 {
@@ -147,6 +720,19 @@ public:
 
 private:
 	CPopulationManager *m_manager;
+};
+
+#define TF_BASE_BOSS_CURRENCY 125
+
+void *CWaveSpawnPopulatorGetCurrencyAmountPerDeath{nullptr};
+
+class CWaveSpawnPopulator : public IPopulator
+{
+public:
+	int GetCurrencyAmountPerDeath( void )
+	{
+		return call_mfunc<int, CWaveSpawnPopulator>(this, CWaveSpawnPopulatorGetCurrencyAmountPerDeath);
+	}
 };
 
 class IPopulationSpawner
@@ -234,7 +820,7 @@ struct pop_entry_t
 
 #include "icandowhateveriwantthefactthattheresnowaytodothisstillisridiculous.h"
 
-ConVar popspawner_maxiconlen("popspawner_maxiconlen", "50");
+ConVar popspawner_maxiconlen("popspawner_maxiconlen", "260");
 
 class SPPopulationSpawner : public IPopulationSpawner
 {
@@ -272,6 +858,24 @@ public:
 	{
 		if(!entry) {
 			return false;
+		}
+
+		KeyValues *pTemplate = data->FindKey("Template");
+		if ( pTemplate )
+		{
+			KeyValues *pTemplateKV = GetPopulator()->GetManager()->GetTemplate( pTemplate->GetString() );
+			if ( pTemplateKV )
+			{
+				// Pump all the keys into ourself now
+				if ( Parse( pTemplateKV ) == false )
+				{
+					return false;
+				}
+			}
+			else
+			{
+				Warning( "Unknown Template '%s' in %s definition\n", pTemplate->GetString(), name.c_str() );
+			}
 		}
 
 		IPluginFunction *func = entry->Parse;
@@ -579,18 +1183,7 @@ SH_DECL_HOOK2(IPopulationSpawner, Spawn, SH_NOATTRIB, 0, bool, const Vector &, E
 SH_DECL_MANUALHOOK0_void(GenericDtor, 1, 0, 0)
 SH_DECL_MANUALHOOK1_void(Event_Killed, 0, 0, 0, const CTakeDamageInfo &)
 
-struct entpopdata_t
-{
-	string_t icon{NULL_STRING};
-	int attrs{0};
-	bool killed{false};
-};
-
-static std::unordered_map<int, entpopdata_t> entpopdata{};
-
 static int objective_resource_ref = INVALID_EHANDLE_INDEX;
-
-IServerTools *servertools = nullptr;
 
 void Sample::OnCoreMapStart(edict_t *pEdictList, int edictCount, int clientMax)
 {
@@ -599,10 +1192,6 @@ void Sample::OnCoreMapStart(edict_t *pEdictList, int edictCount, int clientMax)
 		objective_resource_ref = gamehelpers->EntityToBCompatRef(pEntity);
 	}
 }
-
-class CBaseEntity : public IServerEntity
-{
-};
 
 static int m_iszMannVsMachineWaveClassNames_offset{-1};
 static int m_iszMannVsMachineWaveClassNames2_offset{-1};
@@ -783,7 +1372,146 @@ public:
 			}
 		}
 	}
+
+	void IncrementMannVsMachineWaveClassCount(string_t iszClassIconName, unsigned int iFlags)
+	{
+		int i = 0;
+		for(i = 0 ; i < MVM_CLASS_TYPES_PER_WAVE_MAX; ++i) {
+			if((m_iszMannVsMachineWaveClassNames()[i] == iszClassIconName) && (m_nMannVsMachineWaveClassFlags()[i] & iFlags)) {
+				m_nMannVsMachineWaveClassCounts()[i] += 1;
+
+				if(m_nMannVsMachineWaveClassCounts()[i] <= 0) {
+					m_nMannVsMachineWaveClassCounts()[i] = 1;
+				}
+
+				SetEdictStateChanged(this, m_nMannVsMachineWaveClassCounts_offset + (sizeof(int) * i));
+				return;
+			}
+		}
+
+		for(i = 0 ; i < MVM_CLASS_TYPES_PER_WAVE_MAX; ++i) {
+			if((m_iszMannVsMachineWaveClassNames2()[i] == iszClassIconName) && (m_nMannVsMachineWaveClassFlags2()[i] & iFlags)) {
+				m_nMannVsMachineWaveClassCounts2()[i] -= 1;
+
+				if(m_nMannVsMachineWaveClassCounts2()[i] <= 0) {
+					m_nMannVsMachineWaveClassCounts2()[i] = 1;
+				}
+
+				SetEdictStateChanged(this, m_nMannVsMachineWaveClassCounts2_offset + (sizeof(int) * i));
+				return;
+			}
+		}
+	}
 };
+
+struct entpopdata_t
+{
+	bool killed{false};
+	string_t icon{NULL_STRING};
+	int attrs{0};
+	size_t m_currencyValue{TF_BASE_BOSS_CURRENCY};
+	CWaveSpawnPopulator *m_pWaveSpawnPopulator{nullptr};
+};
+
+static std::unordered_map<int, entpopdata_t> entpopdata{};
+
+class CBaseCombatCharacter;
+
+void *CTFPowerupDropSingleInstance{nullptr};
+
+class CTFPowerup : public CBaseEntity
+{
+public:
+	void DropSingleInstance( Vector &vecLaunchVel, CBaseCombatCharacter *pThrower, float flThrowerTouchDelay, float flResetTime = 0.1f )
+	{
+		call_mfunc<void, CTFPowerup, Vector &, CBaseCombatCharacter *, float, float>(this, CTFPowerupDropSingleInstance, vecLaunchVel, pThrower, flThrowerTouchDelay, flResetTime);
+	}
+};
+
+int m_nAmountOffset = -1;
+
+class CCurrencyPackCustom : public CTFPowerup
+{
+public:
+	void SetAmount( float flAmount )
+	{
+		if(m_nAmountOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_iszModel", &info);
+			m_nAmountOffset = info.actual_offset + sizeof(string_t) + sizeof(float) + 4;
+		}
+
+		*(int *)(((unsigned char *)this) + m_nAmountOffset) = flAmount;
+	}
+};
+
+static void pop_remove_entity(CBaseEntity *pEntity, entpopdata_t &data)
+{
+	if(!data.killed) {
+		size_t nRemainingMoney{data.m_currencyValue};
+		if(data.m_pWaveSpawnPopulator) {
+			nRemainingMoney = data.m_pWaveSpawnPopulator->GetCurrencyAmountPerDeath();
+		}
+
+		QAngle angRand = vec3_angle;
+
+		while( nRemainingMoney > 0 )
+		{
+			int nAmount = 0;
+
+			if ( nRemainingMoney >= 100 )
+			{
+				nAmount = 25;
+			}
+			else if ( nRemainingMoney >= 40 )
+			{
+				nAmount = 10;
+			}
+			else if ( nRemainingMoney >= 5 )
+			{
+				nAmount = 5;
+			}
+			else
+			{
+				nAmount = nRemainingMoney;
+			}
+
+			nRemainingMoney -= nAmount;
+
+			angRand.y = RandomFloat( -180.0f, 180.0f );
+
+			CCurrencyPackCustom *pCurrencyPack = (CCurrencyPackCustom *)CBaseEntity::CreateNoSpawn( "item_currencypack_custom", pEntity->WorldSpaceCenter(), angRand, pEntity );
+			
+			if ( pCurrencyPack )
+			{
+				pCurrencyPack->SetAmount( nAmount );
+
+				Vector vecImpulse = RandomVector( -1,1 );
+				//vecImpulse.z = RandomFloat( 5.0f, 20.0f );
+				vecImpulse.z = 1;
+				VectorNormalize( vecImpulse );
+				//Vector vecVelocity = vecImpulse * 250.0 * RandomFloat( 1.0f, 4.0f );
+				Vector vecVelocity = vecImpulse * 250.0;
+
+				DispatchSpawn( pCurrencyPack );
+				pCurrencyPack->DropSingleInstance( vecVelocity, (CBaseCombatCharacter *)pEntity, 0, 0 );
+			}
+		}
+
+		CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
+		if(pObjectiveResource) {
+			pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.attrs);
+		}
+
+		data.killed = true;
+	}
+
+	CPopulationManager *g_pPopulationManager = GetPopulationManager();
+	if(g_pPopulationManager) {
+		g_pPopulationManager->OnPlayerKilled((CTFPlayer *)pEntity);
+	}
+}
 
 static void hook_entity_killed(const CTakeDamageInfo &info)
 {
@@ -795,13 +1523,7 @@ static void hook_entity_killed(const CTakeDamageInfo &info)
 	if(it != entpopdata.cend()) {
 		entpopdata_t &data{it->second};
 
-		CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
-		if(pObjectiveResource) {
-			data.killed = true;
-			pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.attrs);
-		}
-
-		//TODO!!!! drop money
+		pop_remove_entity(pEntity, data);
 	}
 
 	RETURN_META(MRES_HANDLED);
@@ -817,12 +1539,7 @@ static void hook_entity_dtor()
 	if(it != entpopdata.cend()) {
 		entpopdata_t &data{it->second};
 
-		if(!data.killed) {
-			CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
-			if(pObjectiveResource) {
-				pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.attrs);
-			}
-		}
+		pop_remove_entity(pEntity, data);
 
 		entpopdata.erase(it);
 	}
@@ -833,11 +1550,31 @@ static void hook_entity_dtor()
 	RETURN_META(MRES_HANDLED);
 }
 
+enum populator_type_t
+{
+	populator_unknown,
+	populator_wavespawn,
+	populator_mission,
+};
+
+#define MVM_CLASS_FLAG_NONE				0
+#define MVM_CLASS_FLAG_NORMAL			(1<<0)
+#define MVM_CLASS_FLAG_SUPPORT			(1<<1)
+#define MVM_CLASS_FLAG_MISSION			(1<<2)
+#define MVM_CLASS_FLAG_MINIBOSS			(1<<3)
+#define MVM_CLASS_FLAG_ALWAYSCRIT		(1<<4)
+#define MVM_CLASS_FLAG_SUPPORT_LIMITED	(1<<5)
+
 static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 {
-	if(result) {
-		IPopulationSpawner *spawner = META_IFACEPTR(IPopulationSpawner);
+	IPopulationSpawner *spawner = META_IFACEPTR(IPopulationSpawner);
 
+	IPopulator *populator = spawner->GetPopulator();
+
+	//TODO!!!!!!!!!
+	populator_type_t populator_type{populator_wavespawn};
+
+	if(result) {
 		int num_players = playerhelpers->GetNumPlayers();
 
 		int count = result->Count();
@@ -859,33 +1596,55 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 				continue;
 			}
 
+			int ref = gamehelpers->EntityToBCompatRef(pEntity);
+
+			auto it{entpopdata.find(ref)};
+			if(it == entpopdata.cend()) {
+				it = entpopdata.emplace(ref, entpopdata_t{}).first;
+
+				SH_ADD_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
+				SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), false);
+			}
+
+			entpopdata_t &data{it->second};
+
 			string_t icon = spawner->GetClassIcon(i);
+			if(icon == NULL_STRING) {
+				icon = data.icon;
+			}
 
 			CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
 			if(pObjectiveResource) {
-				//TODO!!!!!!!! only do this in WaveSpawnPopulator
-				pObjectiveResource->SetMannVsMachineWaveClassActive(icon);
+				if(populator_type == populator_wavespawn) {
+					pObjectiveResource->SetMannVsMachineWaveClassActive(icon);
+				} else if(populator_type == populator_mission) {
+					unsigned int iFlags = MVM_CLASS_FLAG_MISSION;
+					/*if ( bot->IsMiniBoss() )
+					{
+						iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+					}
+					if ( bot->HasAttribute( CTFBot::ALWAYS_CRIT ) )
+					{
+						iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
+					}*/
+					pObjectiveResource->IncrementMannVsMachineWaveClassCount(icon, iFlags);
+				}
 			}
 
-			int ref = gamehelpers->EntityToBCompatRef(pEntity);
-
-			if(entpopdata.find(ref) != entpopdata.cend()) {
-				continue;
+			if(populator_type == populator_wavespawn) {
+				data.m_pWaveSpawnPopulator = (CWaveSpawnPopulator *)populator;
 			}
 
-			SH_ADD_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
-			SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), false);
+			if(icon != NULL_STRING) {
+				data.icon = icon;
+			}
 
-			entpopdata_t data;
-			data.icon = icon;
 			for(int j = 0; j < NUM_BOT_ATTRS; ++j) {
 				AttributeType attr{static_cast<AttributeType>(1 << j)};
 				if(spawner->HasAttribute(attr, i)) {
 					data.attrs |= attr;
 				}
 			}
-
-			entpopdata.emplace(ref, std::move(data));
 		}
 	}
 
@@ -1481,10 +2240,14 @@ bool Sample::RegisterConCommandBase(ConCommandBase *pCommand)
 
 bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool late)
 {
+	gpGlobals = ismm->GetCGlobals();
 	GET_V_IFACE_CURRENT(GetEngineFactory, icvar, ICvar, CVAR_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetServerFactory, servertools, IServerTools, VSERVERTOOLS_INTERFACE_VERSION);
 	g_pCVar = icvar;
 	ConVar_Register(0, this);
+
+	popspawner_maxiconlen.SetValue( MAX_PATH );
+
 	return true;
 }
 
@@ -1505,11 +2268,26 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetMemSig("AllocPooledString", &AllocPooledStringPtr);
 
 	g_pGameConf->GetMemSig("IsSpaceToSpawnHere", &IsSpaceToSpawnHerePtr);
-	
+
+	g_pGameConf->GetMemSig("CPopulationManager::OnPlayerKilled", &CPopulationManagerOnPlayerKilled);
+	g_pGameConf->GetMemSig("g_pPopulationManager", &g_pPopulationManager);
+	g_pGameConf->GetMemSig("CWaveSpawnPopulator::GetCurrencyAmountPerDeath", &CWaveSpawnPopulatorGetCurrencyAmountPerDeath);
+
+	g_pGameConf->GetMemSig("CTFPowerup::DropSingleInstance", &CTFPowerupDropSingleInstance);
+
 	int offset = -1;
 	g_pGameConf->GetOffset("CBaseCombatCharacter::Event_Killed", &offset);
 	SH_MANUALHOOK_RECONFIGURE(Event_Killed, offset, 0, 0);
-	
+
+	g_pGameConf->GetOffset("CBaseEntity::SetOwnerEntity", &CBaseEntitySetOwnerEntity);
+	g_pGameConf->GetOffset("CBaseEntity::WorldSpaceCenter", &CBaseEntityWorldSpaceCenter);
+
+	g_pEntityList = reinterpret_cast<CBaseEntityList *>(gamehelpers->GetGlobalEntityList());
+
+	dictionary = servertools->GetEntityFactoryDictionary();
+
+	info_populator_size = dictionary->FindFactory("info_populator")->GetEntitySize();
+
 	popspawner_handle = handlesys->CreateType("popspawner", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
 	find_spawn_location = forwards->CreateForward("find_spawn_location", ET_Hook, 1, nullptr, Param_Array);

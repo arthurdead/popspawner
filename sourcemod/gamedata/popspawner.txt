@@ -8,6 +8,14 @@
 			{
 				"linux" "67"
 			}
+			"CBaseEntity::SetOwnerEntity"
+			{
+				"linux" "18"
+			}
+			"CBaseEntity::WorldSpaceCenter"
+			{
+				"linux" "153"
+			}
 		}
 		"Signatures"
 		{
@@ -30,6 +38,26 @@
 			{
 				"library" "server"
 				"linux" "@_Z18IsSpaceToSpawnHereRK6Vector"
+			}
+			"CPopulationManager::OnPlayerKilled"
+			{
+				"library" "server"
+				"linux" "@_ZN18CPopulationManager14OnPlayerKilledEP9CTFPlayer"
+			}
+			"g_pPopulationManager"
+			{
+				"library" "server"
+				"linux" "@g_pPopulationManager"
+			}
+			"CTFPowerup::DropSingleInstance"
+			{
+				"library" "server"
+				"linux" "@_ZN10CTFPowerup18DropSingleInstanceER6VectorP20CBaseCombatCharacterff"
+			}
+			"CWaveSpawnPopulator::GetCurrencyAmountPerDeath"
+			{
+				"library" "server"
+				"linux" "@_ZN19CWaveSpawnPopulator25GetCurrencyAmountPerDeathEv"
 			}
 		}
 	}
