@@ -672,12 +672,16 @@ public:
 
 	CPopulationManager_members_t &GetMembers()
 	{
-		return *(CPopulationManager_members_t *)(((unsigned char *)this) + (info_populator_size - sizeof(CPopulationManager_members_t)));
+		return *(CPopulationManager_members_t *)(((unsigned char *)this) + ((info_populator_size - sizeof(CPopulationManager_members_t)) + 12));
 	}
 
 	KeyValues *GetTemplate( const char *pszName )
 	{
 		CPopulationManager_members_t &members{GetMembers()};
+
+		if(!members.m_pTemplates) {
+			return nullptr;
+		}
 
 		return members.m_pTemplates->FindKey( pszName ); 
 	}
