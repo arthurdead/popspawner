@@ -57,6 +57,7 @@ typedef wchar_t locchar_t;
 #include <ServerNetworkProperty.h>
 #define DECLARE_PREDICTABLE()
 #include <collisionproperty.h>
+#include <tier1/fmtstr.h>
 
 /**
  * @file extension.cpp
@@ -67,7 +68,10 @@ Sample g_Sample;		/**< Global singleton for extension's main interface */
 
 SMEXT_LINK(&g_Sample);
 
+class CTFTeamSpawn;
+
 typedef CUtlVector< CHandle< CBaseEntity > > EntityHandleVector_t;
+typedef CUtlVector< CHandle< CTFTeamSpawn > > TFTeamSpawnVector_t;
 
 void *AllocPooledStringPtr = nullptr;
 void *IsSpaceToSpawnHerePtr = nullptr;
@@ -130,6 +134,121 @@ T void_to_func(void *ptr)
 	p = ptr;
 	return f;
 }
+
+template <typename T>
+int vfunc_index(T func)
+{
+	SourceHook::MemFuncInfo info{};
+	SourceHook::GetFuncInfo<T>(func, info);
+	return info.vtblindex;
+}
+
+//TODO!!!!!!!!! update tf2sdk
+class CUtlStringHack
+{
+public:
+	void *AllocMemory( uint32 length )
+	{
+		void *pMemoryBlock;
+		if ( m_pString )
+		{
+			pMemoryBlock = realloc( m_pString, length + 1 );
+		}
+		else
+		{
+			pMemoryBlock = malloc( length + 1 );
+		}
+		m_pString = (char*)pMemoryBlock;
+		m_pString[ length ] = 0;
+
+		return pMemoryBlock;
+	}
+
+	void SetDirect( const char *pValue, int nChars )
+	{
+		if ( pValue && nChars > 0 )
+		{
+			if ( pValue == m_pString )
+			{
+				AssertMsg( nChars == Q_strlen(m_pString), "CUtlString::SetDirect does not support resizing strings in place." );
+				return; // Do nothing. Realloc in AllocMemory might move pValue's location resulting in a bad memcpy.
+			}
+
+			Assert( nChars <= Min<int>( strnlen(pValue, nChars) + 1, nChars ) );
+			AllocMemory( nChars );
+			Q_memcpy( m_pString, pValue, nChars );
+		}
+		else
+		{
+			Purge();
+		}
+	}
+
+	void Purge()
+	{
+	    free( m_pString );
+	    m_pString = NULL;
+	}
+
+	void Set( const char *pValue )
+	{
+		int length = pValue ? V_strlen( pValue ) : 0;
+		SetDirect( pValue, length );
+	}
+
+	CUtlStringHack &operator=(const char *pValue)
+	{
+		Set(pValue);
+		return *this;
+	}
+
+	char *m_pString;
+};
+
+//TODO!!!!!!!!! update tf2sdk
+#define FmtStrVSNPrintfHack( szBuf, nBufSize, bQuietTruncation, ppszFormat, nPrevLen, lastArg ) \
+	do \
+	{ \
+		int     result; \
+		va_list arg_ptr; \
+		bool bTruncated = false; \
+		static int scAsserted = 0; \
+	\
+		va_start(arg_ptr, lastArg); \
+		result = vsnprintf( (szBuf), (nBufSize)-1, (*(ppszFormat)), arg_ptr ); \
+		va_end(arg_ptr); \
+	\
+		(szBuf)[(nBufSize)-1] = 0; \
+		if ( bTruncated && !(bQuietTruncation) && scAsserted < 5 ) \
+		{ \
+			Warning( "FmtStrVSNPrintf truncated to %d without QUIET_TRUNCATION specified!\n", ( int )( nBufSize ) ); \
+			AssertMsg( 0, "FmtStrVSNPrintf truncated without QUIET_TRUNCATION specified!\n" ); \
+			scAsserted++; \
+		} \
+		m_nLength = nPrevLen + result; \
+	} \
+	while (0)
+
+//TODO!!!!!!!!! update tf2sdk
+class CFmtStrHack
+{
+public:
+	virtual void InitQuietTruncation()
+	{
+		m_bQuietTruncation = false; 
+	}
+
+	const char *sprintf(PRINTF_FORMAT_STRING const char *pszFormat, ...) FMTFUNCTION( 2, 3 )
+	{
+		InitQuietTruncation();
+		FmtStrVSNPrintfHack(m_szBuf, FMTSTR_STD_LEN, m_bQuietTruncation, &pszFormat, 0, pszFormat ); 
+		return m_szBuf;
+	}
+
+	bool m_bQuietTruncation;
+	char m_szBuf[FMTSTR_STD_LEN];
+	int m_nLength;
+};
 
 enum
 {
@@ -658,7 +777,7 @@ public:
 		bool m_bShouldResetFlag;
 		CUtlVector< const CTFPlayer* > m_donePlayers;
 
-		CUtlString m_defaultEventChangeAttributesName;
+		CUtlStringHack m_defaultEventChangeAttributesName;
 
 		// Respec
 		CUtlMap< uint64, int > m_PlayerRespecPoints;	// The number of upgrade respecs players (steamID) have
@@ -730,6 +849,41 @@ private:
 
 void *CWaveSpawnPopulatorGetCurrencyAmountPerDeath{nullptr};
 
+struct EventInfo;
+
+enum RelativePositionType
+{
+	UNDEFINED = 0,
+	AHEAD,
+	BEHIND,
+	ANYWHERE
+};
+
+void *CSpawnLocationParse = nullptr;
+
+class CSpawnLocation
+{
+public:
+	bool Parse( KeyValues *data )
+	{
+		return call_mfunc<bool, CSpawnLocation, KeyValues *>(this, CSpawnLocationParse, data);
+	}
+
+	RelativePositionType m_relative;
+	TFTeamSpawnVector_t m_teamSpawnVector;
+
+	int m_nSpawnCount;
+	int m_nRandomSeed;
+	bool m_bClosestPointOnNav;
+};
+
+enum SpawnLocationResult
+{
+	SPAWN_LOCATION_NOT_FOUND = 0,
+	SPAWN_LOCATION_NAV,
+	SPAWN_LOCATION_TELEPORTER
+};
+
 class CWaveSpawnPopulator : public IPopulator
 {
 public:
@@ -737,6 +891,60 @@ public:
 	{
 		return call_mfunc<int, CWaveSpawnPopulator>(this, CWaveSpawnPopulatorGetCurrencyAmountPerDeath);
 	}
+
+	bool DetourParse( KeyValues *values );
+
+	CSpawnLocation m_where;
+	int m_totalCount;
+	int m_remainingCount;
+	int m_nClassCounts;
+	int m_maxActive;						// the maximum number of entities active at one time
+	int m_spawnCount;						// the number of entities to spawn at once
+	float m_waitBeforeStarting;
+	float m_waitBetweenSpawns;				// between spawns of mobs
+	bool m_bWaitBetweenSpawnAfterDeath;
+
+	CFmtStrHack m_startWaveWarningSound;
+	EventInfo *m_startWaveOutput;
+
+	CFmtStrHack m_firstSpawnWarningSound;
+	EventInfo *m_firstSpawnOutput;
+
+	CFmtStrHack m_lastSpawnWarningSound;
+	EventInfo *m_lastSpawnOutput;
+
+	CFmtStrHack m_doneWarningSound;
+	EventInfo *m_doneOutput;
+
+	int		m_totalCurrency;
+	int		m_unallocatedCurrency;
+
+	CUtlStringHack m_name;
+	CUtlStringHack m_waitForAllSpawned;
+	CUtlStringHack m_waitForAllDead;
+
+	CountdownTimer m_timer;
+	EntityHandleVector_t m_activeVector;
+	int m_countSpawnedSoFar;
+	int m_myReservedSlotCount;
+	
+	bool m_bSupportWave;
+	bool m_bLimitedSupport;
+	CWave *m_pParent;
+
+	enum InternalStateType
+	{
+		PENDING,
+		PRE_SPAWN_DELAY,
+		SPAWNING,
+		WAIT_FOR_ALL_DEAD,
+		DONE
+	};
+	InternalStateType m_state;
+
+	bool m_bRandomSpawn;
+	SpawnLocationResult m_spawnLocationResult;
+	Vector m_vSpawnPosition;
 };
 
 class IPopulationSpawner
@@ -914,7 +1122,7 @@ public:
 			return false;
 		}
 
-		Handle_t hndl = 0;
+		Handle_t hndl = BAD_HANDLE;
 		ICellArray *arr = nullptr;
 		if(result) {
 			HandleError err{};
@@ -2151,6 +2359,123 @@ cell_t IPopulationSpawnerDelete(IPluginContext *pContext, const cell_t *params)
 	return 0;
 }
 
+cell_t CWaveSpawnPopulatorTotalCountset(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	obj->m_remainingCount = obj->m_totalCount = params[2];
+	return 0;
+}
+
+cell_t CWaveSpawnPopulatorTotalCountget(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	return obj->m_totalCount;
+}
+
+cell_t CWaveSpawnPopulatorMaxActiveset(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	obj->m_maxActive = params[2];
+	return 0;
+}
+
+cell_t CWaveSpawnPopulatorMaxActiveget(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	return obj->m_maxActive;
+}
+
+cell_t CWaveSpawnPopulatorSpawnCountset(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	obj->m_spawnCount = params[2];
+	return 0;
+}
+
+cell_t CWaveSpawnPopulatorSpawnCountget(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	return obj->m_spawnCount;
+}
+
+cell_t CWaveSpawnPopulatorWaitBeforeStartingset(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	obj->m_waitBeforeStarting = sp_ctof(params[2]);
+	return 0;
+}
+
+cell_t CWaveSpawnPopulatorWaitBeforeStartingget(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	return sp_ftoc(obj->m_waitBeforeStarting);
+}
+
+cell_t CWaveSpawnPopulatorWaitBetweenSpawnsset(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+
+	if ( obj->m_waitBetweenSpawns != 0.f && obj->m_bWaitBetweenSpawnAfterDeath )
+	{
+		return pContext->ThrowNativeError( "Already specified WaitBetweenSpawnsAfterDeath time\n" );
+	}
+
+	obj->m_waitBetweenSpawns = sp_ctof(params[2]);
+	return 0;
+}
+
+cell_t CWaveSpawnPopulatorWaitBetweenSpawnsget(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	return sp_ftoc(obj->m_waitBetweenSpawns);
+}
+
+cell_t CWaveSpawnPopulatorWaitBetweenSpawnsAfterDeathset(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+
+	if ( obj->m_waitBetweenSpawns != 0.f )
+	{
+		return pContext->ThrowNativeError( "Already specified WaitBetweenSpawns time\n" );
+	}
+
+	obj->m_bWaitBetweenSpawnAfterDeath = true;
+	obj->m_waitBetweenSpawns = sp_ctof(params[2]);
+	return 0;
+}
+
+cell_t CWaveSpawnPopulatorWaitBetweenSpawnsAfterDeathget(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	return sp_ftoc(obj->m_waitBetweenSpawns);
+}
+
+cell_t CWaveSpawnPopulatorRandomSpawnset(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	obj->m_bRandomSpawn = params[2];
+	return 0;
+}
+
+cell_t CWaveSpawnPopulatorRandomSpawnget(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	return obj->m_bRandomSpawn;
+}
+
+cell_t CWaveSpawnPopulatorTotalCurrencyset(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	obj->m_unallocatedCurrency = obj->m_totalCurrency = params[2];
+	return 0;
+}
+
+cell_t CWaveSpawnPopulatorTotalCurrencyget(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	return obj->m_totalCurrency;
+}
+
 sp_nativeinfo_t natives[] =
 {
 	{"CustomPopulationSpawner.set_data", set_data},
@@ -2183,6 +2508,22 @@ sp_nativeinfo_t natives[] =
 	{"IPopulationSpawner.GetClassIcon", IPopulationSpawnerGetClassIcon},
 	{"IPopulationSpawner.Populator.get", IPopulationSpawnerPopulatorget},
 	{"IPopulationSpawner.Delete", IPopulationSpawnerDelete},
+	{"CWaveSpawnPopulator.TotalCount.set", CWaveSpawnPopulatorTotalCountset},
+	{"CWaveSpawnPopulator.TotalCount.get", CWaveSpawnPopulatorTotalCountget},
+	{"CWaveSpawnPopulator.MaxActive.set", CWaveSpawnPopulatorMaxActiveset},
+	{"CWaveSpawnPopulator.MaxActive.get", CWaveSpawnPopulatorMaxActiveget},
+	{"CWaveSpawnPopulator.SpawnCount.set", CWaveSpawnPopulatorSpawnCountset},
+	{"CWaveSpawnPopulator.SpawnCount.get", CWaveSpawnPopulatorSpawnCountget},
+	{"CWaveSpawnPopulator.WaitBeforeStarting.set", CWaveSpawnPopulatorWaitBeforeStartingset},
+	{"CWaveSpawnPopulator.WaitBeforeStarting.get", CWaveSpawnPopulatorWaitBeforeStartingget},
+	{"CWaveSpawnPopulator.WaitBetweenSpawns.set", CWaveSpawnPopulatorWaitBetweenSpawnsset},
+	{"CWaveSpawnPopulator.WaitBetweenSpawns.get", CWaveSpawnPopulatorWaitBetweenSpawnsget},
+	{"CWaveSpawnPopulator.WaitBetweenSpawnsAfterDeath.set", CWaveSpawnPopulatorWaitBetweenSpawnsAfterDeathset},
+	{"CWaveSpawnPopulator.WaitBetweenSpawnsAfterDeath.get", CWaveSpawnPopulatorWaitBetweenSpawnsAfterDeathget},
+	{"CWaveSpawnPopulator.RandomSpawn.set", CWaveSpawnPopulatorRandomSpawnset},
+	{"CWaveSpawnPopulator.RandomSpawn.get", CWaveSpawnPopulatorRandomSpawnget},
+	{"CWaveSpawnPopulator.TotalCurrency.set", CWaveSpawnPopulatorTotalCurrencyset},
+	{"CWaveSpawnPopulator.TotalCurrency.get", CWaveSpawnPopulatorTotalCurrencyget},
 	{NULL, NULL}
 };
 
@@ -2200,13 +2541,7 @@ void Sample::OnHandleDestroy(HandleType_t type, void *object)
 }
 
 IForward *find_spawn_location = nullptr;
-
-enum SpawnLocationResult
-{
-	SPAWN_LOCATION_NOT_FOUND = 0,
-	SPAWN_LOCATION_NAV,
-	SPAWN_LOCATION_TELEPORTER
-};
+IForward *wavespawn_parse = nullptr;
 
 DETOUR_DECL_MEMBER1(FindSpawnLocation, SpawnLocationResult, Vector &, vSpawnPosition)
 {
@@ -2235,6 +2570,7 @@ DETOUR_DECL_MEMBER1(FindSpawnLocation, SpawnLocationResult, Vector &, vSpawnPosi
 
 CDetour *pParseSpawner = nullptr;
 CDetour *pFindSpawnLocation = nullptr;
+CDetour *pWaveSpawnPopulatorParse = nullptr;
 
 bool Sample::RegisterConCommandBase(ConCommandBase *pCommand)
 {
@@ -2255,6 +2591,228 @@ bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool l
 	return true;
 }
 
+struct EventInfo
+{
+	CFmtStrHack m_target;
+	CFmtStrHack m_action;
+};
+
+static EventInfo *ParseEvent( KeyValues *values )
+{
+	EventInfo *eventInfo = new EventInfo;
+
+	for ( KeyValues *data = values->GetFirstSubKey(); data != NULL; data = data->GetNextKey() )
+	{
+		const char *name = data->GetName();
+
+		if ( Q_strlen( name ) <= 0 )
+		{
+			continue;
+		}
+
+		if ( !Q_stricmp( name, "Target" ) )
+		{
+			eventInfo->m_target.sprintf( "%s", data->GetString() );
+		}
+		else if ( !Q_stricmp( name, "Action" ) )
+		{
+			eventInfo->m_action.sprintf( "%s", data->GetString() );
+		}
+		else
+		{
+			Warning( "Unknown field '%s' in WaveSpawn event definition.\n", data->GetString() );
+			delete eventInfo;
+			return NULL;
+		}
+	}
+
+	return eventInfo;
+}
+
+bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
+{
+	// First, see if we have any Template keys
+	KeyValues *pTemplate = values->FindKey( "Template" );
+	if ( pTemplate )
+	{
+		KeyValues *pTemplateKV = GetManager()->GetTemplate( pTemplate->GetString() );
+		if ( pTemplateKV )
+		{
+			// Pump all the keys into ourself now
+			if ( Parse( pTemplateKV ) == false )
+			{
+				return false;
+			}
+		}
+		else
+		{
+			Warning( "Unknown Template '%s' in WaveSpawn definition\n", pTemplate->GetString() );
+		}
+	}
+
+	for ( KeyValues *data = values->GetFirstSubKey(); data != NULL; data = data->GetNextKey() )
+	{
+		const char *name = data->GetName();
+
+		if ( Q_strlen( name ) <= 0 )
+		{
+			continue;
+		}
+
+		if ( m_where.Parse( data ) )
+		{
+			continue;
+		}
+
+		// Skip templates when looping through the rest of the keys
+		if ( !Q_stricmp( name, "Template" ) )
+			continue;
+
+		if ( !Q_stricmp( name, "TotalCount" ) )
+		{
+			m_totalCount = data->GetInt();
+		}
+		else if ( !Q_stricmp( name, "MaxActive" ) )
+		{
+			m_maxActive = data->GetInt();
+		}
+		else if ( !Q_stricmp( name, "SpawnCount" ) )
+		{
+			m_spawnCount = data->GetInt();
+		}
+		else if ( !Q_stricmp( name, "WaitBeforeStarting" ) )
+		{
+			m_waitBeforeStarting = data->GetFloat();
+		}
+		else if ( !Q_stricmp( name, "WaitBetweenSpawns" ) )
+		{
+			if ( m_waitBetweenSpawns != 0.f && m_bWaitBetweenSpawnAfterDeath )
+			{
+				Warning( "Already specified WaitBetweenSpawnsAfterDeath time, WaitBetweenSpawns won't be used\n" );
+				continue;
+			}
+
+			m_waitBetweenSpawns = data->GetFloat();
+		}
+		else if ( !Q_stricmp( name, "WaitBetweenSpawnsAfterDeath" ) )
+		{
+			if ( m_waitBetweenSpawns != 0.f )
+			{
+				Warning( "Already specified WaitBetweenSpawns time, WaitBetweenSpawnsAfterDeath won't be used\n" );
+				continue;
+			}
+
+			m_bWaitBetweenSpawnAfterDeath = true;
+			m_waitBetweenSpawns = data->GetFloat();
+		}
+		else if ( !Q_stricmp( name, "StartWaveWarningSound" ) )
+		{
+			m_startWaveWarningSound.sprintf( "%s", data->GetString() );
+		}
+		else if ( !Q_stricmp( name, "StartWaveOutput" ) )
+		{
+			m_startWaveOutput = ParseEvent( data );
+		}
+		else if ( !Q_stricmp( name, "FirstSpawnWarningSound" ) )
+		{
+			m_firstSpawnWarningSound.sprintf( "%s", data->GetString() );
+		}
+		else if ( !Q_stricmp( name, "FirstSpawnOutput" ) )
+		{
+			m_firstSpawnOutput = ParseEvent( data );
+		}
+		else if ( !Q_stricmp( name, "LastSpawnWarningSound" ) )
+		{
+			m_lastSpawnWarningSound.sprintf( "%s", data->GetString() );
+		}
+		else if ( !Q_stricmp( name, "LastSpawnOutput" ) )
+		{
+			m_lastSpawnOutput = ParseEvent( data );
+		}
+		else if ( !Q_stricmp( name, "DoneWarningSound" ) )
+		{
+			m_doneWarningSound.sprintf( "%s", data->GetString() );
+		}
+		else if ( !Q_stricmp( name, "DoneOutput" ) )
+		{
+			m_doneOutput = ParseEvent( data );
+		}
+		else if ( !Q_stricmp( name, "TotalCurrency" ) )
+		{
+			m_totalCurrency = data->GetInt();
+		}
+		else if ( !Q_stricmp( name, "Name" ) )
+		{
+			m_name = data->GetString();
+		}
+		else if ( !Q_stricmp( name, "WaitForAllSpawned" ) )
+		{
+			m_waitForAllSpawned = data->GetString();
+		}
+		else if ( !Q_stricmp( name, "WaitForAllDead" ) )
+		{
+			m_waitForAllDead = data->GetString();
+		}
+		else if ( !Q_stricmp( name, "Support" ) )
+		{
+			m_bLimitedSupport = !Q_stricmp( data->GetString(), "Limited" );
+			m_bSupportWave = true;
+		}
+		else if ( !Q_stricmp( name, "RandomSpawn" ) )
+		{
+			m_bRandomSpawn = data->GetBool();
+		}
+		else if ( !Q_stricmp( name, "Plugin" ) )
+		{
+			if(wavespawn_parse->GetFunctionCount() > 0) {
+				HandleError err{};
+				Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
+				if(err != HandleError_None) {
+					smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+					return false;
+				}
+
+				wavespawn_parse->PushCell((cell_t)this);
+				wavespawn_parse->PushCell(hndl);
+				cell_t result = 0;
+				wavespawn_parse->PushCellByRef(&result);
+				cell_t res = 0;
+				wavespawn_parse->Execute(&res);
+
+				handlesys->FreeHandle(hndl, nullptr);
+
+				if(res == Pl_Changed) {
+					if(!result) {
+						return false;
+					}
+				} else if(res >= Pl_Handled) {
+					return false;
+				}
+			}
+		}
+		else
+		{
+			m_spawner = ParseSpawner( this, data );
+
+			if ( m_spawner == NULL )
+			{
+				Warning( "Unknown attribute '%s' in WaveSpawn definition.\n", name );
+			}
+		}
+
+		// These allow us to avoid rounding errors later when divvying money to bots
+		m_unallocatedCurrency = m_totalCurrency;
+		m_remainingCount = m_totalCount;
+	}
+
+	return true;
+}
+
+DETOUR_DECL_MEMBER1(WaveSpawnPopulatorParse, bool, KeyValues *, values)
+{
+	return ((CWaveSpawnPopulator *)this)->CWaveSpawnPopulator::DetourParse(values);
+}
+
 IGameConfig *g_pGameConf = nullptr;
 
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
@@ -2268,6 +2826,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	pFindSpawnLocation = DETOUR_CREATE_MEMBER(FindSpawnLocation, "CSpawnLocation::FindSpawnLocation")
 	pFindSpawnLocation->EnableDetour();
+
+	pWaveSpawnPopulatorParse = DETOUR_CREATE_MEMBER(WaveSpawnPopulatorParse, "CWaveSpawnPopulator::Parse")
+	pWaveSpawnPopulatorParse->EnableDetour();
 	
 	g_pGameConf->GetMemSig("AllocPooledString", &AllocPooledStringPtr);
 
@@ -2276,6 +2837,8 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetMemSig("CPopulationManager::OnPlayerKilled", &CPopulationManagerOnPlayerKilled);
 	g_pGameConf->GetMemSig("g_pPopulationManager", &g_pPopulationManager);
 	g_pGameConf->GetMemSig("CWaveSpawnPopulator::GetCurrencyAmountPerDeath", &CWaveSpawnPopulatorGetCurrencyAmountPerDeath);
+
+	g_pGameConf->GetMemSig("CSpawnLocation::Parse", &CSpawnLocationParse);
 
 	g_pGameConf->GetMemSig("CTFPowerup::DropSingleInstance", &CTFPowerupDropSingleInstance);
 
@@ -2296,6 +2859,8 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	find_spawn_location = forwards->CreateForward("find_spawn_location", ET_Hook, 1, nullptr, Param_Array);
 
+	wavespawn_parse = forwards->CreateForward("wavespawn_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
+
 	sharesys->AddNatives(myself, natives);
 	
 	sharesys->RegisterLibrary(myself, "popspawner");
@@ -2309,7 +2874,9 @@ void Sample::SDK_OnUnload()
 {
 	pParseSpawner->Destroy();
 	pFindSpawnLocation->Destroy();
+	pWaveSpawnPopulatorParse->Destroy();
 	gameconfs->CloseGameConfigFile(g_pGameConf);
 	forwards->ReleaseForward(find_spawn_location);
+	forwards->ReleaseForward(wavespawn_parse);
 	handlesys->RemoveType(popspawner_handle, myself->GetIdentity());
 }

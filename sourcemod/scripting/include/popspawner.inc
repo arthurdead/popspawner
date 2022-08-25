@@ -167,6 +167,61 @@ native bool IsSpaceToSpawnHere(const float pos[3]);
 
 forward Action find_spawn_location(float pos[3]);
 
+methodmap CWaveSpawnPopulator < IPopulator
+{
+	property int TotalCount
+	{
+		public native get();
+		public native set(int value);
+	}
+
+	property int MaxActive
+	{
+		public native get();
+		public native set(int value);
+	}
+
+	property int SpawnCount
+	{
+		public native get();
+		public native set(int value);
+	}
+
+	property float WaitBeforeStarting
+	{
+		public native get();
+		public native set(float value);
+	}
+
+	property float WaitBetweenSpawns
+	{
+		public native get();
+		public native set(float value);
+	}
+
+	property float WaitBetweenSpawnsAfterDeath
+	{
+		public native get();
+		public native set(float value);
+	}
+
+	property bool RandomSpawn
+	{
+		public native get();
+		public native set(bool value);
+	}
+
+	property int TotalCurrency
+	{
+		public native get();
+		public native set(int value);
+	}
+};
+
+forward Action wavespawn_parse(CWaveSpawnPopulator populator, KeyValues data, bool &result);
+
+//forward Action is_bonus_wave(bool &result, int &boss);
+
 #if !defined REQUIRE_EXTENSIONS
 public void __ext_popspawner_SetNTVOptional()
 {

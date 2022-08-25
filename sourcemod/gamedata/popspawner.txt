@@ -59,6 +59,21 @@
 				"library" "server"
 				"linux" "@_ZN19CWaveSpawnPopulator25GetCurrencyAmountPerDeathEv"
 			}
+			"CWaveSpawnPopulator::Parse"
+			{
+				"library" "server"
+				"linux" "@_ZN19CWaveSpawnPopulator5ParseEP9KeyValues"
+			}
+			"CSpawnLocation::Parse"
+			{
+				"library" "server"
+				"linux" "@_ZN14CSpawnLocation5ParseEP9KeyValues"
+			}
+			"CPopulationManager::StartCurrentWave"
+			{
+				"library" "server"
+				"linux" "@_ZN18CPopulationManager16StartCurrentWaveEv"
+			}
 		}
 	}
 }
