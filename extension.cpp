@@ -1238,14 +1238,22 @@ public:
 		if(!entry) {
 			return 0;
 		}
-		
+
+		cell_t res = 0;
+
 		IPluginFunction *func = entry->GetHealth;
-		if(!func) {
+		if(func) {
+			func->PushCell((cell_t)this);
+			func->PushCell(nSpawnNum);
+			func->Execute(&res);
+		}
+		
+		if(res == 0) {
 			func = entry->GetClass;
 			if(func) {
 				func->PushCell((cell_t)this);
 				func->PushCell(nSpawnNum);
-				cell_t res = 0;
+				res = 0;
 				func->Execute(&res);
 				switch(res) {
 					case TF_CLASS_SCOUT: return 125;
@@ -1259,13 +1267,7 @@ public:
 					case TF_CLASS_ENGINEER: return 125;
 				}
 			}
-			return 0;
 		}
-		
-		func->PushCell((cell_t)this);
-		func->PushCell(nSpawnNum);
-		cell_t res = 0;
-		func->Execute(&res);
 		
 		return res;
 	}
@@ -1275,9 +1277,33 @@ public:
 		if(!entry) {
 			return NULL_STRING;
 		}
-		
+
+		cell_t res = 0;
+
+		string_t id = NULL_STRING;
+
 		IPluginFunction *func = entry->GetClassIcon;
-		if(!func) {
+		if(func) {
+			int len = popspawner_maxiconlen.GetInt();
+			if(len < 2) len = 2;
+
+			char *str = new char[len];
+			str[0] = '\0';
+			
+			func->PushCell((cell_t)this);
+			func->PushCell(nSpawnNum);
+			func->PushStringEx(str, len, SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
+			func->PushCell(len);
+			func->Execute(&res);
+			
+			if(res) {
+				id = ((string_t(*)(const char *))AllocPooledStringPtr)( str );
+			}
+			
+			delete[] str;
+		}
+		
+		if(!res) {
 			func = entry->GetClass;
 			if(func) {
 				func->PushCell((cell_t)this);
@@ -1296,31 +1322,8 @@ public:
 					case TF_CLASS_ENGINEER: return MAKE_STRING( "engineer" );
 				}
 			}
-			return NULL_STRING;
 		}
-		
-		int len = popspawner_maxiconlen.GetInt();
-		if(len < 2) len = 2;
 
-		char *str = new char[len];
-		str[0] = '\0';
-		
-		func->PushCell((cell_t)this);
-		func->PushCell(nSpawnNum);
-		func->PushStringEx(str, len, SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
-		func->PushCell(len);
-		cell_t res = 0;
-		func->Execute(&res);
-		
-		if(!res) {
-			delete[] str;
-			return NULL_STRING;
-		}
-		
-		string_t id = ((string_t(*)(const char *))AllocPooledStringPtr)( str );
-		
-		delete[] str;
-		
 		return id;
 	}
 	
@@ -1451,7 +1454,7 @@ void Sample::OnCoreMapStart(edict_t *pEdictList, int edictCount, int clientMax)
 {
 	CBaseEntity *pEntity = servertools->FindEntityByClassname(nullptr, "tf_objective_resource");
 	if(pEntity) {
-		objective_resource_ref = gamehelpers->EntityToBCompatRef(pEntity);
+		objective_resource_ref = gamehelpers->EntityToReference(pEntity);
 	}
 }
 
@@ -1731,7 +1734,7 @@ static void hook_entity_killed_pre(const CTakeDamageInfo &info)
 {
 	CBaseEntity *pEntity = META_IFACEPTR(CBaseEntity);
 
-	int ref = gamehelpers->EntityToBCompatRef(pEntity);
+	int ref = gamehelpers->EntityToReference(pEntity);
 
 	auto it{entpopdata.find(ref)};
 	if(it != entpopdata.cend()) {
@@ -1749,7 +1752,7 @@ static void hook_entity_killed_post(const CTakeDamageInfo &info)
 {
 	CBaseEntity *pEntity = META_IFACEPTR(CBaseEntity);
 
-	int ref = gamehelpers->EntityToBCompatRef(pEntity);
+	int ref = gamehelpers->EntityToReference(pEntity);
 
 	auto it{entpopdata.find(ref)};
 	if(it != entpopdata.cend()) {
@@ -1815,7 +1818,7 @@ static void hook_entity_dtor()
 {
 	CBaseEntity *pEntity = META_IFACEPTR(CBaseEntity);
 
-	int ref = gamehelpers->EntityToBCompatRef(pEntity);
+	int ref = gamehelpers->EntityToReference(pEntity);
 
 	auto it{entpopdata.find(ref)};
 	if(it != entpopdata.cend()) {
@@ -1879,7 +1882,7 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 				continue;
 			}
 
-			int ref = gamehelpers->EntityToBCompatRef(pEntity);
+			int ref = gamehelpers->EntityToReference(pEntity);
 
 			auto it{entpopdata.find(ref)};
 			if(it == entpopdata.cend()) {
