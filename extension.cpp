@@ -148,6 +148,8 @@ int vfunc_index(T func)
 class CUtlStringHack
 {
 public:
+	CUtlStringHack() = delete;
+
 	void *AllocMemory( uint32 length )
 	{
 		void *pMemoryBlock;
@@ -234,6 +236,8 @@ public:
 class CFmtStrHack
 {
 public:
+	CFmtStrHack() = delete;
+
 	virtual void InitQuietTruncation()
 	{
 		m_bQuietTruncation = false; 
@@ -344,6 +348,11 @@ int DispatchSpawn( CBaseEntity *pEntity )
 	return 0;
 }
 
+void RemoveEntity( CBaseEntity *pEntity )
+{
+	servertools->RemoveEntity( pEntity );
+}
+
 int m_angRotationOffset = -1;
 int m_iParentAttachmentOffset = -1;
 int m_iEFlagsOffset = -1;
@@ -416,6 +425,12 @@ public:
 		}
 	}
 };
+
+int m_iNameOffset = -1;
+
+void *CBaseEntitySetAbsOrigin = nullptr;
+void *CBaseEntityCalcAbsolutePosition = nullptr;
+int m_vecAbsOriginOffset = -1;
 
 class CBaseEntity : public IServerEntity
 {
@@ -662,6 +677,32 @@ public:
 		}
 	}
 
+	void SetAbsOrigin( const Vector& origin )
+	{
+		call_mfunc<void, CBaseEntity, const Vector &>(this, CBaseEntitySetAbsOrigin, origin);
+	}
+
+	const Vector &GetAbsOrigin()
+	{
+		if(m_vecAbsOriginOffset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_vecAbsOrigin", &info);
+			m_vecAbsOriginOffset = info.actual_offset;
+		}
+		
+		if(GetIEFlags() & EFL_DIRTY_ABSTRANSFORM) {
+			CalcAbsolutePosition();
+		}
+		
+		return *(Vector *)(((unsigned char *)this) + m_vecAbsOriginOffset);
+	}
+
+	void CalcAbsolutePosition()
+	{
+		call_mfunc<void, CBaseEntity>(this, CBaseEntityCalcAbsolutePosition);
+	}
+
 	void SetSimulationTime(float time)
 	{
 		if(m_flSimulationTimeOffset == -1) {
@@ -715,6 +756,18 @@ public:
 		return call_vfunc<const Vector &>(this, CBaseEntityWorldSpaceCenter);
 	}
 
+	string_t GetEntityName()
+	{
+		if(m_iNameOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iName", &info);
+			m_iNameOffset = info.actual_offset;
+		}
+
+		return *(string_t *)((unsigned char *)this + m_iNameOffset);
+	}
+
 	static CBaseEntity *CreateNoSpawn( const char *szName, const Vector &vecOrigin, const QAngle &vecAngles, CBaseEntity *pOwner = NULL )
 	{
 		CBaseEntity *pEntity{CreateEntityByName(szName)};
@@ -727,6 +780,10 @@ public:
 
 		return pEntity;
 	}
+};
+
+class CBaseCombatCharacter : public CBaseEntity
+{
 };
 
 void CCollisionProperty::MarkSurroundingBoundsDirty()
@@ -759,73 +816,75 @@ void CCollisionProperty::MarkPartitionHandleDirty()
 #endif
 }
 
+struct CPopulationManager_members_t
+{
+	CUtlVector< IPopulator * > m_populatorVector;
+	char m_popfileFull[ MAX_PATH ];
+	char m_popfileShort[ MAX_PATH ];
+	
+	KeyValues	*m_pTemplates;
+
+	bool m_bIsInitialized;
+	bool m_bAllocatedBots;
+	
+	bool m_bBonusRound;
+	CHandle< CBaseCombatCharacter > m_hBonusBoss;
+
+	int m_nStartingCurrency;
+	int m_nLobbyBonusCurrency;
+	int m_nMvMEventPopfileType;
+	int m_nRespawnWaveTime;
+	bool m_bFixedRespawnWaveTime;
+	bool m_canBotsAttackWhileInSpawnRoom;
+	int m_sentryBusterDamageDealtThreshold;
+	int m_sentryBusterKillThreshold;
+
+	uint32	m_iCurrentWaveIndex;
+	CUtlVector< CWave * > m_waveVector;		// pointers to waves within m_populationVector
+
+	float m_flMapRestartTime;					// Restart the Map if gameover and this time elapses
+
+	CUtlVector< PlayerUpgradeHistory * > m_playerUpgrades;		// list of all players and their upgrades who have played on this MVM rotation
+
+	bool m_isRestoringCheckpoint;
+
+	bool m_bAdvancedPopFile;
+	bool m_bCheckForCurrencyAchievement;
+
+	CMannVsMachineStats *m_pMVMStats;
+	KeyValues *m_pKvpMvMMapCycle;
+
+	bool m_bSpawningPaused;
+	bool m_bIsWaveJumping;
+	bool m_bEndlessOn;
+	CUtlVector< CMvMBotUpgrade > m_BotUpgradesList;
+	CUtlVector< CMvMBotUpgrade > m_EndlessActiveBotUpgrades;
+	CUniformRandomStream m_randomizer;
+	CUtlVector< int > m_EndlessSeeds;
+	bool m_bShouldResetFlag;
+	CUtlVector< const CTFPlayer* > m_donePlayers;
+
+	CUtlStringHack m_defaultEventChangeAttributesName;
+
+	// Respec
+	CUtlMap< uint64, int > m_PlayerRespecPoints;	// The number of upgrade respecs players (steamID) have
+	int m_nRespecsAwarded;
+	int m_nRespecsAwardedInWave;
+	int m_nCurrencyCollectedForRespec;
+
+	// Buyback
+	CUtlMap< uint64, int > m_PlayerBuybackPoints;	// The number of times a player can buyback
+};
+
 class CPopulationManager : public CBaseEntity
 {
 public:
-	struct CPopulationManager_members_t
-	{
-		CUtlVector< IPopulator * > m_populatorVector;
-		char m_popfileFull[ MAX_PATH ];
-		char m_popfileShort[ MAX_PATH ];
-		
-		KeyValues	*m_pTemplates;
-
-		bool m_bIsInitialized;
-		bool m_bAllocatedBots;
-		
-		bool m_bBonusRound;
-		CHandle< CBaseCombatCharacter > m_hBonusBoss;
-
-		int m_nStartingCurrency;
-		int m_nLobbyBonusCurrency;
-		int m_nMvMEventPopfileType;
-		int m_nRespawnWaveTime;
-		bool m_bFixedRespawnWaveTime;
-		bool m_canBotsAttackWhileInSpawnRoom;
-		int m_sentryBusterDamageDealtThreshold;
-		int m_sentryBusterKillThreshold;
-
-		uint32	m_iCurrentWaveIndex;
-		CUtlVector< CWave * > m_waveVector;		// pointers to waves within m_populationVector
-
-		float m_flMapRestartTime;					// Restart the Map if gameover and this time elapses
-
-		CUtlVector< PlayerUpgradeHistory * > m_playerUpgrades;		// list of all players and their upgrades who have played on this MVM rotation
-
-		bool m_isRestoringCheckpoint;
-
-		bool m_bAdvancedPopFile;
-		bool m_bCheckForCurrencyAchievement;
-
-		CMannVsMachineStats *m_pMVMStats;
-		KeyValues *m_pKvpMvMMapCycle;
-
-		bool m_bSpawningPaused;
-		bool m_bIsWaveJumping;
-		bool m_bEndlessOn;
-		CUtlVector< CMvMBotUpgrade > m_BotUpgradesList;
-		CUtlVector< CMvMBotUpgrade > m_EndlessActiveBotUpgrades;
-		CUniformRandomStream m_randomizer;
-		CUtlVector< int > m_EndlessSeeds;
-		bool m_bShouldResetFlag;
-		CUtlVector< const CTFPlayer* > m_donePlayers;
-
-		CUtlStringHack m_defaultEventChangeAttributesName;
-
-		// Respec
-		CUtlMap< uint64, int > m_PlayerRespecPoints;	// The number of upgrade respecs players (steamID) have
-		int m_nRespecsAwarded;
-		int m_nRespecsAwardedInWave;
-		int m_nCurrencyCollectedForRespec;
-
-		// Buyback
-		CUtlMap< uint64, int > m_PlayerBuybackPoints;	// The number of times a player can buyback
-	};
-
 	CPopulationManager_members_t &GetMembers()
 	{
 		return *(CPopulationManager_members_t *)(((unsigned char *)this) + ((info_populator_size - sizeof(CPopulationManager_members_t))));
 	}
+
+	bool DetourParse( void );
 
 	KeyValues *GetTemplate( const char *pszName )
 	{
@@ -880,6 +939,19 @@ private:
 	CPopulationManager *m_manager;
 };
 
+SH_DECL_MANUALHOOK0_void(GenericDtor, 1, 0, 0)
+SH_DECL_HOOK1(IPopulator, HasEventChangeAttributes, const, 0, bool, const char *);
+
+enum populator_type_t
+{
+	populator_none,
+	populator_unknown,
+	populator_wavespawn,
+	populator_mission,
+};
+
+static populator_type_t g_hackdetectpopulator{populator_none};
+
 #define TF_BASE_BOSS_CURRENCY 125
 
 void *CWaveSpawnPopulatorGetCurrencyAmountPerDeath{nullptr};
@@ -919,15 +991,61 @@ enum SpawnLocationResult
 	SPAWN_LOCATION_TELEPORTER
 };
 
+#define MVM_CLASS_FLAG_NONE				0
+#define MVM_CLASS_FLAG_NORMAL			(1<<0)
+#define MVM_CLASS_FLAG_SUPPORT			(1<<1)
+#define MVM_CLASS_FLAG_MISSION			(1<<2)
+#define MVM_CLASS_FLAG_MINIBOSS			(1<<3)
+#define MVM_CLASS_FLAG_ALWAYSCRIT		(1<<4)
+#define MVM_CLASS_FLAG_SUPPORT_LIMITED	(1<<5)
+
+void *CWaveSpawnPopulatorCTOR{nullptr};
+void *CRandomPlacementPopulatorCTOR{nullptr};
+void *CPeriodicSpawnPopulatorCTOR{nullptr};
+void *CMissionPopulatorCTOR{nullptr};
+void *CWaveCTOR{nullptr};
+
 class CWaveSpawnPopulator : public IPopulator
 {
 public:
+	static CWaveSpawnPopulator *create(CPopulationManager *pManager)
+	{
+		CWaveSpawnPopulator *bytes = (CWaveSpawnPopulator *)calloc(1, sizeof(CWaveSpawnPopulator));
+		call_mfunc<void, CWaveSpawnPopulator, CPopulationManager *>(bytes, CWaveSpawnPopulatorCTOR, pManager);
+		SH_ADD_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(bytes, &CWaveSpawnPopulator::dtor), false);
+		SH_ADD_HOOK(IPopulator, HasEventChangeAttributes, bytes, SH_MEMBER(bytes, &CWaveSpawnPopulator::HookHasEventChangeAttributes), false);
+		return bytes;
+	}
+
+	void dtor()
+	{
+		CWaveSpawnPopulator *bytes = META_IFACEPTR(CWaveSpawnPopulator);
+		SH_REMOVE_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(this, &CWaveSpawnPopulator::dtor), false);
+		SH_REMOVE_HOOK(IPopulator, HasEventChangeAttributes, bytes, SH_MEMBER(this, &CWaveSpawnPopulator::HookHasEventChangeAttributes), false);
+		RETURN_META(MRES_HANDLED);
+	}
+
+	bool HookHasEventChangeAttributes( const char* pszEventName ) const
+	{
+		if(strcmp(pszEventName, "__hack_detect_populator__") == 0) {
+			g_hackdetectpopulator = populator_wavespawn;
+			RETURN_META_VALUE(MRES_SUPERCEDE, false);
+		}
+
+		RETURN_META_VALUE(MRES_IGNORED, false);
+	}
+
 	int GetCurrencyAmountPerDeath( void )
 	{
 		return call_mfunc<int, CWaveSpawnPopulator>(this, CWaveSpawnPopulatorGetCurrencyAmountPerDeath);
 	}
 
 	bool DetourParse( KeyValues *values );
+
+	bool IsLimitedSupportWave( void ) const { return m_bLimitedSupport; }
+	bool IsSupportWave( void ) const { return m_bSupportWave; }
+
+	void SetParent( CWave *pParent ) { m_pParent = pParent; }
 
 	CSpawnLocation m_where;
 	int m_totalCount;
@@ -980,6 +1098,140 @@ public:
 	bool m_bRandomSpawn;
 	SpawnLocationResult m_spawnLocationResult;
 	Vector m_vSpawnPosition;
+};
+
+using MissionType = int;
+
+class CMissionPopulator : public IPopulator
+{
+public:
+	static CMissionPopulator *create(CPopulationManager *pManager)
+	{
+		CMissionPopulator *bytes = (CMissionPopulator *)calloc(1, sizeof(CMissionPopulator));
+		call_mfunc<void, CMissionPopulator, CPopulationManager *>(bytes, CMissionPopulatorCTOR, pManager);
+		SH_ADD_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(bytes, &CMissionPopulator::dtor), false);
+		SH_ADD_HOOK(IPopulator, HasEventChangeAttributes, bytes, SH_MEMBER(bytes, &CMissionPopulator::HookHasEventChangeAttributes), false);
+		return bytes;
+	}
+
+	void dtor()
+	{
+		CMissionPopulator *bytes = META_IFACEPTR(CMissionPopulator);
+		SH_REMOVE_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(this, &CMissionPopulator::dtor), false);
+		SH_REMOVE_HOOK(IPopulator, HasEventChangeAttributes, bytes, SH_MEMBER(this, &CMissionPopulator::HookHasEventChangeAttributes), false);
+		RETURN_META(MRES_HANDLED);
+	}
+
+	bool HookHasEventChangeAttributes( const char* pszEventName ) const
+	{
+		if(strcmp(pszEventName, "__hack_detect_populator__") == 0) {
+			g_hackdetectpopulator = populator_mission;
+			RETURN_META_VALUE(MRES_SUPERCEDE, false);
+		}
+
+		RETURN_META_VALUE(MRES_IGNORED, false);
+	}
+
+	int BeginAtWave( void ) { return m_beginAtWaveIndex; }
+	int StopAtWave( void ) { return m_stopAtWaveIndex; }
+
+	MissionType m_mission;
+	CSpawnLocation m_where;
+
+	enum StateType
+	{
+		NOT_STARTED,
+		INITIAL_COOLDOWN,
+		RUNNING
+	};
+
+	StateType m_state;
+
+	float m_initialCooldown;
+	float m_cooldownDuration;
+	CountdownTimer m_cooldownTimer;
+	CountdownTimer m_checkForDangerousSentriesTimer;
+	int m_desiredCount;
+	int m_beginAtWaveIndex;					// this mission becomes active at this wave number
+	int m_stopAtWaveIndex;					// stop when this wave becomes active
+};
+
+struct WaveClassCount_t
+{
+	int nClassCount;
+	string_t iszClassIconName;
+	unsigned int iFlags;
+};
+
+class CWave : public IPopulator
+{
+public:
+	static CWave *create(CPopulationManager *pManager)
+	{
+		CWave *bytes = (CWave *)calloc(1, sizeof(CWave));
+		call_mfunc<void, CWave, CPopulationManager *>(bytes, CWaveCTOR, pManager);
+		return bytes;
+	}
+
+	bool DetourParse( KeyValues *data );
+
+	void AddClassType( string_t iszClassIconName, int nCount, unsigned int iFlags )
+	{
+		int nIndex = -1;
+		for ( int nClass = 0; nClass < m_nWaveClassCounts.Count(); ++nClass )
+		{
+			if ( ( m_nWaveClassCounts[ nClass ].iszClassIconName == iszClassIconName ) && ( m_nWaveClassCounts[ nClass ].iFlags & iFlags ) )
+			{
+				nIndex = nClass;
+				break;
+			}
+		}
+
+		if ( nIndex == -1 )
+		{
+			nIndex = m_nWaveClassCounts.AddToTail();
+			m_nWaveClassCounts[ nIndex ].iszClassIconName = iszClassIconName;
+			m_nWaveClassCounts[ nIndex ].nClassCount = 0;
+			m_nWaveClassCounts[ nIndex ].iFlags = MVM_CLASS_FLAG_NONE;
+		}
+
+		m_nWaveClassCounts[ nIndex ].nClassCount += nCount;
+		m_nWaveClassCounts[ nIndex ].iFlags |= iFlags;
+	}
+
+	CUtlVector< CWaveSpawnPopulator * > m_waveSpawnVector;
+
+	bool m_isStarted;
+	bool m_bFiredInitWaveOutput;
+	int m_iEnemyCount;
+	int m_nTanksSpawned;
+	int m_nSentryBustersSpawned;
+	int m_nNumEngineersTeleportSpawned;
+
+	int m_nNumSentryBustersKilled;
+
+	CUtlVector< WaveClassCount_t > m_nWaveClassCounts;
+	int	m_totalCurrency;
+
+	EventInfo *m_startOutput;
+	EventInfo *m_doneOutput;
+	EventInfo *m_initOutput;
+
+	CFmtStrHack m_description;
+	CFmtStrHack m_soundName;
+	
+	float m_waitWhenDone;
+	CountdownTimer m_doneTimer;	
+
+	bool m_bCheckBonusCreditsMin;
+	bool m_bCheckBonusCreditsMax;
+	float m_flBonusCreditsTime;
+
+	bool m_bPlayedUpgradeAlert;
+	CountdownTimer m_GetUpgradesAlertTimer;
+
+	bool m_isEveryContainedWaveSpawnDone;
+	float m_flStartTime;
 };
 
 class IPopulationSpawner
@@ -1207,7 +1459,7 @@ public:
 		}
 		
 		func->PushCell((cell_t)this);
-		func->PushString(pszEventName);
+		func->PushStringEx((char *)pszEventName, strlen(pszEventName)+1, SM_PARAM_STRING_COPY|SM_PARAM_STRING_UTF8, 0);
 		cell_t res = 0;
 		func->Execute(&res);
 		
@@ -1445,14 +1697,18 @@ pop_entry_t::~pop_entry_t()
 class CTakeDamageInfo;
 
 SH_DECL_HOOK2(IPopulationSpawner, Spawn, SH_NOATTRIB, 0, bool, const Vector &, EntityHandleVector_t *);
-SH_DECL_MANUALHOOK0_void(GenericDtor, 1, 0, 0)
 SH_DECL_MANUALHOOK1_void(Event_Killed, 0, 0, 0, const CTakeDamageInfo &)
 
 static int objective_resource_ref = INVALID_EHANDLE_INDEX;
 
+CBaseEntity *FindEntityByClassname(CBaseEntity *pStart, const char *classname)
+{
+	return servertools->FindEntityByClassname(pStart, classname);
+}
+
 void Sample::OnCoreMapStart(edict_t *pEdictList, int edictCount, int clientMax)
 {
-	CBaseEntity *pEntity = servertools->FindEntityByClassname(nullptr, "tf_objective_resource");
+	CBaseEntity *pEntity = FindEntityByClassname(nullptr, "tf_objective_resource");
 	if(pEntity) {
 		objective_resource_ref = gamehelpers->EntityToReference(pEntity);
 	}
@@ -1836,20 +2092,18 @@ static void hook_entity_dtor()
 	RETURN_META(MRES_HANDLED);
 }
 
-enum populator_type_t
+populator_type_t get_populator_type(IPopulator *populator)
 {
-	populator_unknown,
-	populator_wavespawn,
-	populator_mission,
-};
+	g_hackdetectpopulator = populator_none;
+	populator->HasEventChangeAttributes("__hack_detect_populator__");
+	populator_type_t type = g_hackdetectpopulator;
+	g_hackdetectpopulator = populator_none;
+	if(type != populator_none) {
+		return type;
+	}
 
-#define MVM_CLASS_FLAG_NONE				0
-#define MVM_CLASS_FLAG_NORMAL			(1<<0)
-#define MVM_CLASS_FLAG_SUPPORT			(1<<1)
-#define MVM_CLASS_FLAG_MISSION			(1<<2)
-#define MVM_CLASS_FLAG_MINIBOSS			(1<<3)
-#define MVM_CLASS_FLAG_ALWAYSCRIT		(1<<4)
-#define MVM_CLASS_FLAG_SUPPORT_LIMITED	(1<<5)
+	return populator_unknown;
+}
 
 static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 {
@@ -1857,8 +2111,7 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 
 	IPopulator *populator = spawner->GetPopulator();
 
-	//TODO!!!!!!!!!
-	populator_type_t populator_type{populator_wavespawn};
+	populator_type_t populator_type{get_populator_type(populator)};
 
 	if(result) {
 		int num_players = playerhelpers->GetNumPlayers();
@@ -2553,6 +2806,19 @@ cell_t CWaveSpawnPopulatorTotalCurrencyget(IPluginContext *pContext, const cell_
 	return obj->m_totalCurrency;
 }
 
+cell_t CWaveWaitWhenDoneset(IPluginContext *pContext, const cell_t *params)
+{
+	CWave *obj{(CWave *)params[1]};
+	obj->m_waitWhenDone = sp_ctof(params[2]);
+	return 0;
+}
+
+cell_t CWaveWaitWhenDoneget(IPluginContext *pContext, const cell_t *params)
+{
+	CWave *obj{(CWave *)params[1]};
+	return sp_ftoc(obj->m_waitWhenDone);
+}
+
 sp_nativeinfo_t natives[] =
 {
 	{"CustomPopulationSpawner.set_data", set_data},
@@ -2601,6 +2867,8 @@ sp_nativeinfo_t natives[] =
 	{"CWaveSpawnPopulator.RandomSpawn.get", CWaveSpawnPopulatorRandomSpawnget},
 	{"CWaveSpawnPopulator.TotalCurrency.set", CWaveSpawnPopulatorTotalCurrencyset},
 	{"CWaveSpawnPopulator.TotalCurrency.get", CWaveSpawnPopulatorTotalCurrencyget},
+	{"CWave.WaitWhenDone.set", CWaveWaitWhenDoneset},
+	{"CWave.WaitWhenDone.get", CWaveWaitWhenDoneget},
 	{NULL, NULL}
 };
 
@@ -2675,36 +2943,27 @@ struct EventInfo
 	CFmtStrHack m_action;
 };
 
-static EventInfo *ParseEvent( KeyValues *values )
+void *ParseEventPtr{nullptr};
+
+IForward *pop_event_fired{nullptr};
+
+#define DETOUR_DECL_STATIC2_callconv(name, ret, callconv, p1type, p1name, p2type, p2name) \
+	ret callconv (*name##_Actual)(p1type, p2type) = NULL; \
+	ret callconv name(p1type p1name, p2type p2name)
+
+static EventInfo *  ParseEvent( KeyValues *values )
 {
-	EventInfo *eventInfo = new EventInfo;
+	return (void_to_func<EventInfo *  (*)(KeyValues *)>(ParseEventPtr))(values);
+}
 
-	for ( KeyValues *data = values->GetFirstSubKey(); data != NULL; data = data->GetNextKey() )
-	{
-		const char *name = data->GetName();
-
-		if ( Q_strlen( name ) <= 0 )
-		{
-			continue;
-		}
-
-		if ( !Q_stricmp( name, "Target" ) )
-		{
-			eventInfo->m_target.sprintf( "%s", data->GetString() );
-		}
-		else if ( !Q_stricmp( name, "Action" ) )
-		{
-			eventInfo->m_action.sprintf( "%s", data->GetString() );
-		}
-		else
-		{
-			Warning( "Unknown field '%s' in WaveSpawn event definition.\n", data->GetString() );
-			delete eventInfo;
-			return NULL;
-		}
+DETOUR_DECL_STATIC2_callconv(FireEvent, void, __attribute__((__regparm__(2))), EventInfo *,eventInfo, const char *,eventName)
+{
+	if(pop_event_fired->GetFunctionCount() > 0) {
+		pop_event_fired->PushStringEx((char *)eventName, strlen(eventName)+1, SM_PARAM_STRING_COPY|SM_PARAM_STRING_UTF8, 0);
+		pop_event_fired->Execute(nullptr);
 	}
 
-	return eventInfo;
+	DETOUR_STATIC_CALL(FireEvent)(eventInfo, eventName);
 }
 
 bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
@@ -2717,7 +2976,7 @@ bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
 		if ( pTemplateKV )
 		{
 			// Pump all the keys into ourself now
-			if ( Parse( pTemplateKV ) == false )
+			if ( DetourParse( pTemplateKV ) == false )
 			{
 				return false;
 			}
@@ -2891,6 +3150,393 @@ DETOUR_DECL_MEMBER1(WaveSpawnPopulatorParse, bool, KeyValues *, values)
 	return ((CWaveSpawnPopulator *)this)->CWaveSpawnPopulator::DetourParse(values);
 }
 
+IForward *wave_parse{nullptr};
+
+bool CWave::DetourParse( KeyValues *data )
+{
+	m_iEnemyCount = 0;
+	m_nWaveClassCounts.RemoveAll();
+	m_totalCurrency = 0;
+
+	FOR_EACH_SUBKEY( data, kvWave )
+	{
+		if ( !Q_stricmp( kvWave->GetName(), "WaveSpawn" ) )
+		{
+			CWaveSpawnPopulator *wavePopulator = CWaveSpawnPopulator::create(GetManager());
+
+			if ( wavePopulator->DetourParse( kvWave ) == false )
+			{
+				Warning( "Error reading WaveSpawn definition\n" );
+				return false;
+			}
+
+			m_waveSpawnVector.AddToTail( wavePopulator );
+
+			if ( !wavePopulator->IsSupportWave() )
+			{
+				// this is a total of all enemies we have to fight that are NOT support enemies
+				m_iEnemyCount += wavePopulator->m_totalCount;
+			}
+			m_totalCurrency += wavePopulator->m_totalCurrency;
+
+			wavePopulator->SetParent( this );
+
+			if ( wavePopulator->m_spawner )
+			{
+				if ( wavePopulator->m_spawner->IsVarious() )
+				{
+					for ( int i = 0; i < wavePopulator->m_totalCount; ++i )
+					{
+						unsigned int iFlags = wavePopulator->IsSupportWave() ? MVM_CLASS_FLAG_SUPPORT : MVM_CLASS_FLAG_NORMAL;
+						if ( wavePopulator->m_spawner->IsMiniBoss( i ) )
+						{
+							iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+						}
+						if ( wavePopulator->m_spawner->HasAttribute( ALWAYS_CRIT, i ) )
+						{
+							iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
+						}
+						if ( wavePopulator->IsLimitedSupportWave() )
+						{
+							iFlags |= MVM_CLASS_FLAG_SUPPORT_LIMITED;
+						}
+						AddClassType( wavePopulator->m_spawner->GetClassIcon( i ), 1, iFlags );
+					}
+				}
+				else
+				{
+					unsigned int iFlags = wavePopulator->IsSupportWave() ? MVM_CLASS_FLAG_SUPPORT : MVM_CLASS_FLAG_NORMAL;
+					if ( wavePopulator->m_spawner->IsMiniBoss() )
+					{
+						iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+					}
+					if ( wavePopulator->m_spawner->HasAttribute( ALWAYS_CRIT ) )
+					{
+						iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
+					}
+					if ( wavePopulator->IsLimitedSupportWave() )
+					{
+						iFlags |= MVM_CLASS_FLAG_SUPPORT_LIMITED;
+					}
+					AddClassType( wavePopulator->m_spawner->GetClassIcon(), wavePopulator->m_totalCount, iFlags );
+				}
+			}
+		}
+		else if ( !Q_stricmp( kvWave->GetName(), "Sound" ) )
+		{
+			m_soundName.sprintf( "%s", kvWave->GetString() );
+		}
+		else if ( !Q_stricmp( kvWave->GetName(), "Description" ) )
+		{
+			m_description.sprintf( "%s", kvWave->GetString() );
+		}
+		else if ( !Q_stricmp( kvWave->GetName(), "WaitWhenDone" ) )
+		{
+			m_waitWhenDone = kvWave->GetFloat();
+		}
+		else if ( !Q_stricmp( kvWave->GetName(), "Checkpoint" ) )
+		{
+			//m_isCheckpoint = true;
+		}
+		else if ( !Q_stricmp( kvWave->GetName(), "StartWaveOutput" ) )
+		{
+			m_startOutput = ParseEvent( kvWave );
+		}
+		else if ( !Q_stricmp( kvWave->GetName(), "DoneOutput" ) )
+		{
+			m_doneOutput = ParseEvent( kvWave );
+		}
+		else if ( !Q_stricmp( kvWave->GetName(), "InitWaveOutput" ) )
+		{
+			m_initOutput = ParseEvent( kvWave );
+		}
+		else if ( !Q_stricmp( kvWave->GetName(), "Plugin" ) )
+		{
+			if(wave_parse->GetFunctionCount() > 0) {
+				HandleError err{};
+				Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
+				if(err != HandleError_None) {
+					smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+					return false;
+				}
+
+				wave_parse->PushCell((cell_t)this);
+				wave_parse->PushCell(hndl);
+				cell_t result = 0;
+				wave_parse->PushCellByRef(&result);
+				cell_t res = 0;
+				wave_parse->Execute(&res);
+
+				handlesys->FreeHandle(hndl, nullptr);
+
+				if(res == Pl_Changed) {
+					if(!result) {
+						return false;
+					}
+				} else if(res >= Pl_Handled) {
+					return false;
+				}
+			}
+		}
+		else
+		{
+			Warning( "Unknown attribute '%s' in Wave definition.\n", kvWave->GetName() );
+		}
+	}
+
+	return true;
+}
+
+enum 
+{
+	MVM_EVENT_POPFILE_NONE = 0,
+	MVM_EVENT_POPFILE_HALLOWEEN,
+
+	MVM_EVENT_POPFILE_MAX_TYPES,
+};
+
+class CRandomPlacementPopulator : public IPopulator
+{
+public:
+	static CRandomPlacementPopulator *create(CPopulationManager *pManager)
+	{
+		CRandomPlacementPopulator *bytes = (CRandomPlacementPopulator *)calloc(1, sizeof(CRandomPlacementPopulator));
+		call_mfunc<void, CRandomPlacementPopulator, CPopulationManager *>(bytes, CRandomPlacementPopulatorCTOR, pManager);
+		return bytes;
+	}
+
+	int m_count;
+	float m_minSeparation;
+	unsigned int m_navAreaFilter;
+};
+
+class CPeriodicSpawnPopulator : public IPopulator
+{
+public:
+	static CPeriodicSpawnPopulator *create(CPopulationManager *pManager)
+	{
+		CPeriodicSpawnPopulator *bytes = (CPeriodicSpawnPopulator *)calloc(1, sizeof(CPeriodicSpawnPopulator));
+		call_mfunc<void, CPeriodicSpawnPopulator, CPopulationManager *>(bytes, CPeriodicSpawnPopulatorCTOR, pManager);
+		return bytes;
+	}
+
+	CSpawnLocation m_where;
+	float m_minInterval;
+	float m_maxInterval;
+
+	CountdownTimer m_timer;
+};
+
+bool CPopulationManager::DetourParse( void )
+{
+	CPopulationManager_members_t &members{GetMembers()};
+
+	if ( members.m_popfileFull[ 0 ] == '\0' )
+	{
+		Warning( "No population file specified.\n" );
+		return false;
+	}
+
+	//if ( m_bIsInitialized )
+//		return true;
+
+	KeyValues *values = new KeyValues( "Population" );
+	if ( !values->LoadFromFile( filesystem, members.m_popfileFull, "POPULATION" ) )
+	{
+		Warning( "Can't open %s.\n", members.m_popfileFull );
+		values->deleteThis();
+		return false;
+	}
+
+	// Clear out existing Data structures
+	members.m_populatorVector.PurgeAndDeleteElements();
+	members.m_waveVector.RemoveAll();
+	members.m_bEndlessOn = false;
+
+	if ( members.m_pTemplates )
+	{
+		members.m_pTemplates->deleteThis();
+		members.m_pTemplates = NULL;
+	}
+
+	// find templates first
+	KeyValues *pTemplates = values->FindKey( "Templates" );
+
+	if ( pTemplates )
+	{
+		members.m_pTemplates = pTemplates->MakeCopy();
+	}
+
+	for ( KeyValues *data = values->GetFirstSubKey(); data != NULL; data = data->GetNextKey() )
+	{
+		const char *name = data->GetName();
+
+		if ( Q_strlen( name ) <= 0 )
+		{
+			continue;
+		}
+
+		if ( !Q_stricmp( name, "StartingCurrency" ) )
+		{
+			members.m_nStartingCurrency = data->GetInt();
+		}
+		else if ( !Q_stricmp( name, "RespawnWaveTime" ) )
+		{
+			members.m_nRespawnWaveTime = data->GetInt();
+		}
+		else if ( !Q_stricmp( name, "EventPopfile" ) )
+		{
+			if ( !Q_stricmp( data->GetString(), "Halloween" ) )
+			{
+				members.m_nMvMEventPopfileType = MVM_EVENT_POPFILE_HALLOWEEN;
+			}
+			else
+			{
+				members.m_nMvMEventPopfileType = MVM_EVENT_POPFILE_NONE;
+			}
+		}
+		else if ( !Q_stricmp( name, "FixedRespawnWaveTime" ) )
+		{
+			members.m_bFixedRespawnWaveTime = true;
+		}
+		else if ( !Q_stricmp( name, "AddSentryBusterWhenDamageDealtExceeds" ) )
+		{
+			members.m_sentryBusterDamageDealtThreshold = data->GetInt();
+		}
+		else if ( !Q_stricmp( name, "AddSentryBusterWhenKillCountExceeds" ) )
+		{
+			members.m_sentryBusterKillThreshold = data->GetInt();
+		}
+		else if ( !Q_stricmp( name, "CanBotsAttackWhileInSpawnRoom" ) )
+		{
+			if ( !Q_stricmp( data->GetString(), "no" ) || !Q_stricmp( data->GetString(), "false" ) )
+			{
+				members.m_canBotsAttackWhileInSpawnRoom = false;
+			}
+			else
+			{
+				members.m_canBotsAttackWhileInSpawnRoom = true;
+			}
+		}
+		else if ( !Q_stricmp( name, "RandomPlacement" ) )
+		{
+			CRandomPlacementPopulator *randomPopulator = CRandomPlacementPopulator::create(this);
+
+			if ( randomPopulator->Parse( data ) == false )
+			{
+				Warning( "Error reading RandomPlacement definition\n" );
+				return false;
+			}
+
+			members.m_populatorVector.AddToTail( randomPopulator );
+		}
+		else if ( !Q_stricmp( name, "PeriodicSpawn" ) )
+		{
+			CPeriodicSpawnPopulator *periodicPopulator = CPeriodicSpawnPopulator::create(this);
+
+			if ( periodicPopulator->Parse( data ) == false )
+			{
+				Warning( "Error reading PeriodicSpawn definition\n" );
+				return false;
+			}
+
+			members.m_populatorVector.AddToTail( periodicPopulator );
+		}
+		else if ( !Q_stricmp( name, "Wave" ) )
+		{
+			CWave *wave = CWave::create(this);
+
+			if ( !wave->DetourParse( data ) )
+			{
+				Warning( "Error reading Wave definition\n" );
+				return false;
+			}
+
+
+			// also keep vector of wave pointers for convenience
+			members.m_waveVector.AddToTail( wave );
+		}
+		else if ( !Q_stricmp( name, "Mission" ) )
+		{
+			CMissionPopulator *missionPopulator = CMissionPopulator::create(this);
+
+			if ( missionPopulator->Parse( data ) == false )
+			{
+				Warning( "Error reading Mission definition\n" );
+				return false;
+			}
+
+			members.m_populatorVector.AddToTail( missionPopulator );
+		}
+		else if ( !Q_stricmp( name, "Templates" ) )
+		{
+			// handled above
+		}
+		else if ( !Q_stricmp( name, "Advanced" ) )
+		{
+			members.m_bAdvancedPopFile = true;
+		}
+		else if ( !Q_stricmp( name, "IsEndless" ) )
+		{
+			members.m_bEndlessOn = true;
+		}
+		else if ( !Q_stricmp( name, "Plugin" ) )
+		{
+			
+		}
+		else
+		{
+			Warning( "Invalid populator '%s'\n", name );
+			return false;
+		}
+	}
+
+	for ( int nPopulator = 0; nPopulator < members.m_populatorVector.Count(); ++nPopulator )
+	{
+		IPopulator *populator{members.m_populatorVector[ nPopulator ]};
+
+		CMissionPopulator *pMission = ((get_populator_type(populator) == populator_mission) ? (CMissionPopulator *)populator : nullptr);
+
+		if ( pMission )
+		{
+			// FIXME: Need a way to handle missions that spawn multiple types
+			int nStartWave = pMission->BeginAtWave();
+			int nStopWave = pMission->StopAtWave();
+
+			if ( pMission->m_spawner && !pMission->m_spawner->IsVarious() )
+			{
+				for ( int i = nStartWave; i < nStopWave; ++i )
+				{
+					if ( members.m_waveVector.IsValidIndex( i ) )
+					{
+						CWave *pWave = members.m_waveVector[ i ];
+					
+						unsigned int iFlags = MVM_CLASS_FLAG_MISSION;
+						if ( pMission->m_spawner->IsMiniBoss() )
+						{
+							iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+						}
+						if ( pMission->m_spawner->HasAttribute( ALWAYS_CRIT ) )
+						{
+							iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
+						}
+						pWave->AddClassType( pMission->m_spawner->GetClassIcon(), 0, iFlags );
+					}
+				}
+			}
+		}
+	}
+
+	values->deleteThis();
+
+	return true;
+}
+
+DETOUR_DECL_MEMBER1(WaveParse, bool, KeyValues *, values)
+{
+	return ((CWave *)this)->CWave::DetourParse(values);
+}
+
 static bool g_bInPopParse{false};
 
 DETOUR_DECL_MEMBER4(KeyValuesLoadFromFile, bool, IBaseFileSystem *,filesystem, const char *,resourceName, const char *,pathID, bool, refreshCache)
@@ -2904,15 +3550,102 @@ DETOUR_DECL_MEMBER4(KeyValuesLoadFromFile, bool, IBaseFileSystem *,filesystem, c
 DETOUR_DECL_MEMBER0(PopulationManagerParse, bool)
 {
 	g_bInPopParse = true;
-	bool ret = DETOUR_MEMBER_CALL(PopulationManagerParse)();
+	bool ret = ((CPopulationManager *)this)->CPopulationManager::DetourParse();
 	g_bInPopParse = false;
 	return ret;
+}
+
+ConVar tf_mvm_bonus( "tf_mvm_bonus", "0" );
+ConVar tf_mvm_bonus_boss_classname( "tf_mvm_bonus_boss_classname", "eyeball_boss" );
+ConVar tf_mvm_bonus_spawnpoint_name( "tf_mvm_bonus_spawnpoint_name", "spawn_boss_startpoint" );
+ConVar tf_mvm_bonus_spawnpoint_classname( "tf_mvm_bonus_spawnpoint_classname", "info_target" );
+
+IForward *is_bonus_wave{nullptr};
+
+DETOUR_DECL_MEMBER0(StartCurrentWave, void)
+{
+	DETOUR_MEMBER_CALL(StartCurrentWave)();
+
+	CPopulationManager *pThis{(CPopulationManager *)this};
+
+	CPopulationManager_members_t &members{pThis->GetMembers()};
+
+	bool is_bonus = false;
+	CBaseCombatCharacter *pBossEntity = nullptr;
+	Vector boss_pos{};
+	boss_pos.Zero();
+
+	if(is_bonus_wave->GetFunctionCount() > 0) {
+		cell_t is = 0;
+		is_bonus_wave->PushCellByRef(&is);
+		cell_t boss_idx = -1;
+		is_bonus_wave->PushCellByRef(&boss_idx);
+		cell_t pos[3]{sp_ftoc(0.0f),sp_ftoc(0.0f),sp_ftoc(0.0f)};
+		is_bonus_wave->PushArray(pos, 3, SM_PARAM_COPYBACK);
+		cell_t res = 0;
+		is_bonus_wave->Execute(&res);
+
+		if(res == Pl_Changed) {
+			is_bonus = is;
+			pBossEntity = (CBaseCombatCharacter *)gamehelpers->ReferenceToEntity(boss_idx);
+			boss_pos.x = sp_ctof(pos[0]);
+			boss_pos.y = sp_ctof(pos[1]);
+			boss_pos.z = sp_ctof(pos[2]);
+		}
+	}
+
+	members.m_bBonusRound = (tf_mvm_bonus.GetBool() || is_bonus);
+	if ( members.m_bBonusRound )
+	{
+		bool created = false;
+
+		if(!pBossEntity) {
+			members.m_hBonusBoss = (CBaseCombatCharacter *)CreateEntityByName( tf_mvm_bonus_boss_classname.GetString() );
+			created = true;
+		} else {
+			members.m_hBonusBoss = pBossEntity;
+		}
+
+		if ( members.m_hBonusBoss )
+		{
+			if(boss_pos.IsZero()) {
+				bool bFoundSpawnPoint = false;
+				CBaseEntity *spawnPoint = NULL;
+				while( ( spawnPoint = FindEntityByClassname( spawnPoint, tf_mvm_bonus_spawnpoint_classname.GetString() ) ) != NULL )
+				{
+					if ( FStrEq( STRING( spawnPoint->GetEntityName() ), tf_mvm_bonus_spawnpoint_name.GetString() ) )
+					{
+						bFoundSpawnPoint = true;
+						break;
+					}
+				}
+
+				if(!bFoundSpawnPoint) {
+					Warning( "CPopulationManager::StartCurrentWave trying to spawn a bonus boss, but cannot find %s %s in the map", tf_mvm_bonus_spawnpoint_name.GetString(), tf_mvm_bonus_spawnpoint_classname.GetString() );
+					RemoveEntity( members.m_hBonusBoss );
+					members.m_hBonusBoss = NULL;
+					members.m_bBonusRound = false;
+					return;
+				}
+
+				boss_pos = spawnPoint->GetAbsOrigin();
+			}
+
+			members.m_hBonusBoss->SetAbsOrigin( boss_pos );
+			if(created) {
+				DispatchSpawn( members.m_hBonusBoss );
+			}
+		}
+	}
 }
 
 IGameConfig *g_pGameConf = nullptr;
 
 CDetour *pPopulationManagerParse{nullptr};
 CDetour *pKeyValuesLoadFromFile{nullptr};
+CDetour *pWaveParse{nullptr};
+CDetour *pFireEvent{nullptr};
+CDetour *pStartCurrentWave{nullptr};
 
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
@@ -2939,11 +3672,20 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	pWaveSpawnPopulatorParse = DETOUR_CREATE_MEMBER(WaveSpawnPopulatorParse, "CWaveSpawnPopulator::Parse")
 	pWaveSpawnPopulatorParse->EnableDetour();
 
+	pWaveParse = DETOUR_CREATE_MEMBER(WaveParse, "CWave::Parse")
+	pWaveParse->EnableDetour();
+
+	pFireEvent = DETOUR_CREATE_STATIC(FireEvent, "FireEvent")
+	pFireEvent->EnableDetour();
+
 	pPopulationManagerParse = DETOUR_CREATE_MEMBER(PopulationManagerParse, "CPopulationManager::Parse")
 	pPopulationManagerParse->EnableDetour();
 
 	pKeyValuesLoadFromFile = DETOUR_CREATE_MEMBER(KeyValuesLoadFromFile, "KeyValues::LoadFromFile")
 	pKeyValuesLoadFromFile->EnableDetour();
+
+	pStartCurrentWave = DETOUR_CREATE_MEMBER(StartCurrentWave, "CPopulationManager::StartCurrentWave")
+	pStartCurrentWave->EnableDetour();
 
 	g_pGameConf->GetMemSig("AllocPooledString", &AllocPooledStringPtr);
 
@@ -2955,7 +3697,18 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	g_pGameConf->GetMemSig("CSpawnLocation::Parse", &CSpawnLocationParse);
 
+	g_pGameConf->GetMemSig("CWaveSpawnPopulator::CWaveSpawnPopulator", &CWaveSpawnPopulatorCTOR);
+	g_pGameConf->GetMemSig("CRandomPlacementPopulator::CRandomPlacementPopulator", &CRandomPlacementPopulatorCTOR);
+	g_pGameConf->GetMemSig("CPeriodicSpawnPopulator::CPeriodicSpawnPopulator", &CPeriodicSpawnPopulatorCTOR);
+	g_pGameConf->GetMemSig("CMissionPopulator::CMissionPopulator", &CMissionPopulatorCTOR);
+	g_pGameConf->GetMemSig("CWave::CWave", &CWaveCTOR);
+
+	g_pGameConf->GetMemSig("ParseEvent", &ParseEventPtr);
+
 	g_pGameConf->GetMemSig("CTFPowerup::DropSingleInstance", &CTFPowerupDropSingleInstance);
+
+	g_pGameConf->GetMemSig("CBaseEntity::CalcAbsolutePosition", &CBaseEntityCalcAbsolutePosition);
+	g_pGameConf->GetMemSig("CBaseEntity::SetAbsOrigin", &CBaseEntitySetAbsOrigin);
 
 	int offset = -1;
 	g_pGameConf->GetOffset("CBaseCombatCharacter::Event_Killed", &offset);
@@ -2975,6 +3728,11 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	find_spawn_location = forwards->CreateForward("find_spawn_location", ET_Hook, 1, nullptr, Param_Array);
 
 	wavespawn_parse = forwards->CreateForward("wavespawn_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
+	wave_parse = forwards->CreateForward("wave_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
+
+	pop_event_fired = forwards->CreateForward("pop_event_fired", ET_Ignore, 1, nullptr, Param_String);
+
+	is_bonus_wave = forwards->CreateForward("is_bonus_wave", ET_Hook, 3, nullptr, Param_CellByRef, Param_CellByRef, Param_Array);
 
 	sharesys->AddNatives(myself, natives);
 	
@@ -2992,8 +3750,13 @@ void Sample::SDK_OnUnload()
 	pWaveSpawnPopulatorParse->Destroy();
 	pPopulationManagerParse->Destroy();
 	pKeyValuesLoadFromFile->Destroy();
+	pWaveParse->Destroy();
+	pStartCurrentWave->Destroy();
 	gameconfs->CloseGameConfigFile(g_pGameConf);
 	forwards->ReleaseForward(find_spawn_location);
 	forwards->ReleaseForward(wavespawn_parse);
+	forwards->ReleaseForward(wave_parse);
+	forwards->ReleaseForward(pop_event_fired);
+	forwards->ReleaseForward(is_bonus_wave);
 	handlesys->RemoveType(popspawner_handle, myself->GetIdentity());
 }

@@ -218,9 +218,21 @@ methodmap CWaveSpawnPopulator < IPopulator
 	}
 };
 
-forward Action wavespawn_parse(CWaveSpawnPopulator populator, KeyValues data, bool &result);
+methodmap CWave < IPopulator
+{
+	property float WaitWhenDone
+	{
+		public native get();
+		public native set(float value);
+	}
+};
 
-//forward Action is_bonus_wave(bool &result, int &boss);
+forward Action wavespawn_parse(CWaveSpawnPopulator populator, KeyValues data, bool &result);
+forward Action wave_parse(CWave populator, KeyValues data, bool &result);
+
+forward Action is_bonus_wave(bool &result, int &boss, float pos[3]);
+
+forward void pop_event_fired(const char[] name);
 
 #if !defined REQUIRE_EXTENSIONS
 public void __ext_popspawner_SetNTVOptional()
