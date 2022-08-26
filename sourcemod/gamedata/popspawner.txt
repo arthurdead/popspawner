@@ -74,6 +74,16 @@
 				"library" "server"
 				"linux" "@_ZN18CPopulationManager16StartCurrentWaveEv"
 			}
+			"CPopulationManager::Parse"
+			{
+				"library" "server"
+				"linux" "@_ZN18CPopulationManager5ParseEv"
+			}
+			"KeyValues::LoadFromFile"
+			{
+				"library" "server"
+				"linux" "@_ZN9KeyValues12LoadFromFileEP15IBaseFileSystemPKcS3_b"
+			}
 		}
 	}
 }

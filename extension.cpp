@@ -58,6 +58,7 @@ typedef wchar_t locchar_t;
 #define DECLARE_PREDICTABLE()
 #include <collisionproperty.h>
 #include <tier1/fmtstr.h>
+#include <filesystem.h>
 
 /**
  * @file extension.cpp
@@ -78,7 +79,7 @@ void *IsSpaceToSpawnHerePtr = nullptr;
 ICvar *icvar = nullptr;
 CBaseEntityList *g_pEntityList = nullptr;
 CGlobalVars *gpGlobals = nullptr;
-
+IFileSystem *filesystem = nullptr;
 IServerTools *servertools = nullptr;
 IEntityFactoryDictionary *dictionary{nullptr};
 
@@ -386,6 +387,36 @@ enum InvalidatePhysicsBits_t
 
 void SetEdictStateChanged(CBaseEntity *pEntity, int offset);
 
+class IEntityListener
+{
+public:
+	virtual void OnEntityCreated( CBaseEntity *pEntity ) {};
+	virtual void OnEntitySpawned( CBaseEntity *pEntity ) {};
+	virtual void OnEntityDeleted( CBaseEntity *pEntity ) {};
+};
+
+class CGlobalEntityList : public CBaseEntityList
+{
+public:
+	int m_iHighestEnt; // the topmost used array index
+	int m_iNumEnts;
+	int m_iNumEdicts;
+	bool m_bClearingEntities;
+	CUtlVector<IEntityListener *>	m_entityListeners;
+
+	void NotifyCreateEntity( CBaseEntity *pEnt )
+	{
+		if ( !pEnt )
+			return;
+
+		//DevMsg(2,"Deleted %s\n", pBaseEnt->GetClassname() );
+		for ( int i = m_entityListeners.Count()-1; i >= 0; i-- )
+		{
+			m_entityListeners[i]->OnEntityCreated( pEnt );
+		}
+	}
+};
+
 class CBaseEntity : public IServerEntity
 {
 public:
@@ -692,6 +723,8 @@ public:
 		pEntity->SetLocalAngles( vecAngles );
 		pEntity->SetOwnerEntity( pOwner );
 
+		((CGlobalEntityList *)g_pEntityList)->NotifyCreateEntity( pEntity );
+
 		return pEntity;
 	}
 };
@@ -791,18 +824,20 @@ public:
 
 	CPopulationManager_members_t &GetMembers()
 	{
-		return *(CPopulationManager_members_t *)(((unsigned char *)this) + ((info_populator_size - sizeof(CPopulationManager_members_t)) + 12));
+		return *(CPopulationManager_members_t *)(((unsigned char *)this) + ((info_populator_size - sizeof(CPopulationManager_members_t))));
 	}
 
 	KeyValues *GetTemplate( const char *pszName )
 	{
 		CPopulationManager_members_t &members{GetMembers()};
 
-		if(!members.m_pTemplates) {
-			return nullptr;
+		KeyValues *pTemplate = nullptr;
+
+		if(members.m_pTemplates) {
+			pTemplate = members.m_pTemplates->FindKey( pszName );
 		}
 
-		return members.m_pTemplates->FindKey( pszName ); 
+		return pTemplate;
 	}
 
 	void OnPlayerKilled( CTFPlayer *corpse )
@@ -1387,6 +1422,21 @@ pop_entry_t::~pop_entry_t()
 	}
 
 	poentrypmap.erase(name);
+
+	Parse = nullptr;
+	Spawn = nullptr;
+	HasEventChangeAttributes = nullptr;
+	GetClass = nullptr;
+	GetHealth = nullptr;
+	GetClassIcon = nullptr;
+	IsMiniBoss = nullptr;
+	HasAttribute = nullptr;
+	Delete = nullptr;
+	WhereRequired = false;
+	IsVarious = false;
+	name.clear();
+	owner = nullptr;
+	hndl = BAD_HANDLE;
 }
 
 class CTakeDamageInfo;
@@ -1618,10 +1668,11 @@ public:
 
 struct entpopdata_t
 {
-	bool killed{false};
+	bool removed{false};
 	string_t icon{NULL_STRING};
 	int attrs{0};
 	size_t m_currencyValue{TF_BASE_BOSS_CURRENCY};
+	IPopulationSpawner *m_spawner{nullptr};
 	CWaveSpawnPopulator *m_pWaveSpawnPopulator{nullptr};
 };
 
@@ -1660,7 +1711,50 @@ public:
 
 static void pop_remove_entity(CBaseEntity *pEntity, entpopdata_t &data)
 {
-	if(!data.killed) {
+	if(!data.removed) {
+
+		CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
+		if(pObjectiveResource) {
+			pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.attrs);
+		}
+
+		CPopulationManager *g_pPopulationManager = GetPopulationManager();
+		if(g_pPopulationManager) {
+			g_pPopulationManager->OnPlayerKilled((CTFPlayer *)pEntity);
+		}
+
+		data.removed = true;
+	}
+}
+
+static void hook_entity_killed_pre(const CTakeDamageInfo &info)
+{
+	CBaseEntity *pEntity = META_IFACEPTR(CBaseEntity);
+
+	int ref = gamehelpers->EntityToBCompatRef(pEntity);
+
+	auto it{entpopdata.find(ref)};
+	if(it != entpopdata.cend()) {
+		entpopdata_t &data{it->second};
+
+		pop_remove_entity(pEntity, data);
+
+		RETURN_META(MRES_HANDLED);
+	}
+
+	RETURN_META(MRES_IGNORED);
+}
+
+static void hook_entity_killed_post(const CTakeDamageInfo &info)
+{
+	CBaseEntity *pEntity = META_IFACEPTR(CBaseEntity);
+
+	int ref = gamehelpers->EntityToBCompatRef(pEntity);
+
+	auto it{entpopdata.find(ref)};
+	if(it != entpopdata.cend()) {
+		entpopdata_t &data{it->second};
+
 		size_t nRemainingMoney{data.m_currencyValue};
 		if(data.m_pWaveSpawnPopulator) {
 			nRemainingMoney = data.m_pWaveSpawnPopulator->GetCurrencyAmountPerDeath();
@@ -1711,34 +1805,10 @@ static void pop_remove_entity(CBaseEntity *pEntity, entpopdata_t &data)
 			}
 		}
 
-		CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
-		if(pObjectiveResource) {
-			pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.attrs);
-		}
-
-		data.killed = true;
+		RETURN_META(MRES_HANDLED);
 	}
 
-	CPopulationManager *g_pPopulationManager = GetPopulationManager();
-	if(g_pPopulationManager) {
-		g_pPopulationManager->OnPlayerKilled((CTFPlayer *)pEntity);
-	}
-}
-
-static void hook_entity_killed(const CTakeDamageInfo &info)
-{
-	CBaseEntity *pEntity = META_IFACEPTR(CBaseEntity);
-
-	int ref = gamehelpers->EntityToBCompatRef(pEntity);
-
-	auto it{entpopdata.find(ref)};
-	if(it != entpopdata.cend()) {
-		entpopdata_t &data{it->second};
-
-		pop_remove_entity(pEntity, data);
-	}
-
-	RETURN_META(MRES_HANDLED);
+	RETURN_META(MRES_IGNORED);
 }
 
 static void hook_entity_dtor()
@@ -1756,7 +1826,8 @@ static void hook_entity_dtor()
 		entpopdata.erase(it);
 	}
 
-	SH_REMOVE_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), false);
+	SH_REMOVE_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed_pre), false);
+	SH_REMOVE_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed_post), true);
 	SH_REMOVE_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
 
 	RETURN_META(MRES_HANDLED);
@@ -1815,7 +1886,8 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 				it = entpopdata.emplace(ref, entpopdata_t{}).first;
 
 				SH_ADD_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
-				SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed), false);
+				SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed_pre), false);
+				SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed_post), true);
 			}
 
 			entpopdata_t &data{it->second};
@@ -1846,6 +1918,8 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 			if(populator_type == populator_wavespawn) {
 				data.m_pWaveSpawnPopulator = (CWaveSpawnPopulator *)populator;
 			}
+
+			data.m_spawner = spawner;
 
 			if(icon != NULL_STRING) {
 				data.icon = icon;
@@ -2583,6 +2657,7 @@ bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool l
 	gpGlobals = ismm->GetCGlobals();
 	GET_V_IFACE_CURRENT(GetEngineFactory, icvar, ICvar, CVAR_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetServerFactory, servertools, IServerTools, VSERVERTOOLS_INTERFACE_VERSION);
+	GET_V_IFACE_CURRENT(GetEngineFactory, filesystem, IFileSystem, FILESYSTEM_INTERFACE_VERSION)
 	g_pCVar = icvar;
 	ConVar_Register(0, this);
 
@@ -2813,10 +2888,41 @@ DETOUR_DECL_MEMBER1(WaveSpawnPopulatorParse, bool, KeyValues *, values)
 	return ((CWaveSpawnPopulator *)this)->CWaveSpawnPopulator::DetourParse(values);
 }
 
+static bool g_bInPopParse{false};
+
+DETOUR_DECL_MEMBER4(KeyValuesLoadFromFile, bool, IBaseFileSystem *,filesystem, const char *,resourceName, const char *,pathID, bool, refreshCache)
+{
+	if(g_bInPopParse) {
+		pathID = "POPULATION";
+	}
+	return DETOUR_MEMBER_CALL(KeyValuesLoadFromFile)(filesystem, resourceName, pathID, refreshCache);
+}
+
+DETOUR_DECL_MEMBER0(PopulationManagerParse, bool)
+{
+	g_bInPopParse = true;
+	bool ret = DETOUR_MEMBER_CALL(PopulationManagerParse)();
+	g_bInPopParse = false;
+	return ret;
+}
+
 IGameConfig *g_pGameConf = nullptr;
+
+CDetour *pPopulationManagerParse{nullptr};
+CDetour *pKeyValuesLoadFromFile{nullptr};
 
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
+	char pPath[MAX_PATH];
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/population");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/population");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/population");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+
 	gameconfs->LoadGameConfigFile("popspawner", &g_pGameConf, error, maxlen);
 	
 	CDetourManager::Init(g_pSM->GetScriptingEngine(), g_pGameConf);
@@ -2829,7 +2935,13 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	pWaveSpawnPopulatorParse = DETOUR_CREATE_MEMBER(WaveSpawnPopulatorParse, "CWaveSpawnPopulator::Parse")
 	pWaveSpawnPopulatorParse->EnableDetour();
-	
+
+	pPopulationManagerParse = DETOUR_CREATE_MEMBER(PopulationManagerParse, "CPopulationManager::Parse")
+	pPopulationManagerParse->EnableDetour();
+
+	pKeyValuesLoadFromFile = DETOUR_CREATE_MEMBER(KeyValuesLoadFromFile, "KeyValues::LoadFromFile")
+	pKeyValuesLoadFromFile->EnableDetour();
+
 	g_pGameConf->GetMemSig("AllocPooledString", &AllocPooledStringPtr);
 
 	g_pGameConf->GetMemSig("IsSpaceToSpawnHere", &IsSpaceToSpawnHerePtr);
@@ -2875,6 +2987,8 @@ void Sample::SDK_OnUnload()
 	pParseSpawner->Destroy();
 	pFindSpawnLocation->Destroy();
 	pWaveSpawnPopulatorParse->Destroy();
+	pPopulationManagerParse->Destroy();
+	pKeyValuesLoadFromFile->Destroy();
 	gameconfs->CloseGameConfigFile(g_pGameConf);
 	forwards->ReleaseForward(find_spawn_location);
 	forwards->ReleaseForward(wavespawn_parse);
