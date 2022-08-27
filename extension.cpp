@@ -335,7 +335,7 @@ public:
 };
 
 void *CPopulationManagerOnPlayerKilled = nullptr;
-void *g_pPopulationManager{nullptr};
+void *g_pPopulationManagerPtr{nullptr};
 
 CBaseEntity *CreateEntityByName( const char *szName )
 {
@@ -888,6 +888,13 @@ struct CPopulationManager_members_t
 	CUtlMap< uint64, int > m_PlayerBuybackPoints;	// The number of times a player can buyback
 };
 
+ConVar *tf_populator_health_multiplier{nullptr};
+ConVar *tf_mvm_endless_tank_boost{nullptr};
+ConVar *tf_mvm_endless_force_on{nullptr};
+ConVar *tf_populator_damage_multiplier{nullptr};
+ConVar *tf_mvm_endless_damage_boost_rate{nullptr};
+ConVar *tf_mvm_endless_scale_rate{nullptr};
+
 class CPopulationManager : public CBaseEntity
 {
 public:
@@ -915,11 +922,62 @@ public:
 	{
 		call_mfunc<void, CPopulationManager, CTFPlayer *>(this, CPopulationManagerOnPlayerKilled, corpse);
 	}
+
+	float GetDamageMultiplier ()
+	{
+		CPopulationManager_members_t &members{GetMembers()};
+
+		//if ( !IsInEndlessWaves() )
+			return tf_populator_damage_multiplier->GetFloat();
+
+		// Find out how many times over t
+		// Floor of the result, ie 9 / 7 returns 1, 15 / 7 returns 2;
+		//int nRepeatCount = members.m_iCurrentWaveIndex / tf_mvm_endless_scale_rate->GetInt();
+		//return tf_populator_damage_multiplier->GetFloat() + tf_mvm_endless_damage_boost_rate->GetFloat() * nRepeatCount;
+	}
+
+	float GetHealthMultiplier ( bool bIsTank )
+	{
+		CPopulationManager_members_t &members{GetMembers()};
+
+		if ( !IsInEndlessWaves() || !bIsTank )
+			return tf_populator_health_multiplier->GetFloat();
+
+		// Calculate how much health the tank should get per wave
+		return tf_populator_health_multiplier->GetFloat() + members.m_iCurrentWaveIndex * tf_mvm_endless_tank_boost->GetFloat();
+	}
+
+	bool IsInEndlessWaves ( void )
+	{
+		CPopulationManager_members_t &members{GetMembers()};
+
+		return (members.m_bEndlessOn || tf_mvm_endless_force_on->GetBool() ) && members.m_waveVector.Count() > 0;
+	}
+
+	CWave * GetCurrentWave( void )
+	{
+		CPopulationManager_members_t &members{GetMembers()};
+
+		if ( !members.m_bIsInitialized || members.m_waveVector.Count() == 0 )
+			return NULL;
+
+		// Wrap for Infinite MVM
+		if ( IsInEndlessWaves() )
+		{
+			return members.m_waveVector[members.m_iCurrentWaveIndex % members.m_waveVector.Count() ];
+		}
+		else if ( (int)members.m_iCurrentWaveIndex < members.m_waveVector.Count() )
+		{
+			return members.m_waveVector[members.m_iCurrentWaveIndex];
+		}
+		
+		return NULL;
+	}
 };
 
 CPopulationManager *GetPopulationManager()
 {
-	return ((CPopulationManager *)g_pPopulationManager);
+	return ((CPopulationManager *)g_pPopulationManagerPtr);
 }
 
 class IPopulator
@@ -1178,11 +1236,31 @@ struct WaveClassCount_t
 class CWave : public IPopulator
 {
 public:
+	struct vars_t
+	{
+		size_t index{0};
+	};
+
+	unsigned char *vars_ptr()
+	{ return (((unsigned char *)this) + sizeof(CWave)); }
+	vars_t &getvars()
+	{ return *(vars_t *)vars_ptr(); }
+
 	static CWave *create(CPopulationManager *pManager)
 	{
 		CWave *bytes = (CWave *)calloc(1, sizeof(CWave));
 		call_mfunc<void, CWave, CPopulationManager *>(bytes, CWaveCTOR, pManager);
+		new (bytes->vars_ptr()) vars_t{};
+		SH_ADD_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(bytes, &CWave::dtor), false);
 		return bytes;
+	}
+
+	void dtor()
+	{
+		CWave *bytes = META_IFACEPTR(CWave);
+		bytes->getvars().~vars_t();
+		SH_REMOVE_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(this, &CWave::dtor), false);
+		RETURN_META(MRES_HANDLED);
 	}
 
 	bool DetourParse( KeyValues *data );
@@ -1989,9 +2067,9 @@ static void pop_remove_entity(CBaseEntity *pEntity, entpopdata_t &data)
 			pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.attrs);
 		}
 
-		CPopulationManager *g_pPopulationManager = GetPopulationManager();
-		if(g_pPopulationManager) {
-			g_pPopulationManager->OnPlayerKilled((CTFPlayer *)pEntity);
+		CPopulationManager *PopulationManager = GetPopulationManager();
+		if(PopulationManager) {
+			PopulationManager->OnPlayerKilled((CTFPlayer *)pEntity);
 		}
 
 		data.removed = true;
@@ -2833,6 +2911,46 @@ cell_t CWaveWaitWhenDoneget(IPluginContext *pContext, const cell_t *params)
 	return sp_ftoc(obj->m_waitWhenDone);
 }
 
+cell_t CWaveIndexget(IPluginContext *pContext, const cell_t *params)
+{
+	CWave *obj{(CWave *)params[1]};
+	return obj->getvars().index;
+}
+
+cell_t pop_health_multiplier(IPluginContext *pContext, const cell_t *params)
+{
+	float mult = 1.0f;
+
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(PopulationManager) {
+		mult = PopulationManager->GetHealthMultiplier(params[1]);
+	}
+
+	return sp_ftoc(mult);
+}
+
+cell_t pop_damage_multiplier(IPluginContext *pContext, const cell_t *params)
+{
+	float mult = 1.0f;
+
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(PopulationManager) {
+		mult = PopulationManager->GetDamageMultiplier();
+	}
+
+	return sp_ftoc(mult);
+}
+
+cell_t current_wave(IPluginContext *pContext, const cell_t *params)
+{
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(PopulationManager) {
+		return (cell_t)PopulationManager->GetCurrentWave();
+	}
+
+	return 0;
+}
+
 sp_nativeinfo_t natives[] =
 {
 	{"CustomPopulationSpawner.set_data", set_data},
@@ -2883,6 +3001,10 @@ sp_nativeinfo_t natives[] =
 	{"CWaveSpawnPopulator.TotalCurrency.get", CWaveSpawnPopulatorTotalCurrencyget},
 	{"CWave.WaitWhenDone.set", CWaveWaitWhenDoneset},
 	{"CWave.WaitWhenDone.get", CWaveWaitWhenDoneget},
+	{"CWave.Index.get", CWaveIndexget},
+	{"pop_health_multiplier", pop_health_multiplier},
+	{"pop_damage_multiplier", pop_damage_multiplier},
+	{"current_wave", current_wave},
 	{NULL, NULL}
 };
 
@@ -2945,6 +3067,13 @@ bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool l
 	GET_V_IFACE_CURRENT(GetEngineFactory, filesystem, IFileSystem, FILESYSTEM_INTERFACE_VERSION)
 	g_pCVar = icvar;
 	ConVar_Register(0, this);
+
+	tf_populator_health_multiplier = g_pCVar->FindVar("tf_populator_health_multiplier");
+	tf_mvm_endless_tank_boost = g_pCVar->FindVar("tf_mvm_endless_tank_boost");
+	tf_mvm_endless_force_on = g_pCVar->FindVar("tf_mvm_endless_force_on");
+	tf_populator_damage_multiplier = g_pCVar->FindVar("tf_populator_damage_multiplier");
+	tf_mvm_endless_damage_boost_rate = g_pCVar->FindVar("tf_mvm_endless_damage_boost_rate");
+	tf_mvm_endless_scale_rate = g_pCVar->FindVar("tf_mvm_endless_scale_rate");
 
 	popspawner_maxiconlen.SetValue( MAX_PATH );
 
@@ -3341,6 +3470,8 @@ public:
 	CountdownTimer m_timer;
 };
 
+IForward *pop_parse{nullptr};
+
 bool CPopulationManager::DetourParse( void )
 {
 	CPopulationManager_members_t &members{GetMembers()};
@@ -3469,6 +3600,8 @@ bool CPopulationManager::DetourParse( void )
 
 			// also keep vector of wave pointers for convenience
 			members.m_waveVector.AddToTail( wave );
+
+			wave->getvars().index = members.m_waveVector.Count()-1;
 		}
 		else if ( !Q_stricmp( name, "Mission" ) )
 		{
@@ -3496,7 +3629,30 @@ bool CPopulationManager::DetourParse( void )
 		}
 		else if ( !Q_stricmp( name, "Plugin" ) )
 		{
-			
+			if(pop_parse->GetFunctionCount() > 0) {
+				HandleError err{};
+				Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
+				if(err != HandleError_None) {
+					smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+					return false;
+				}
+
+				pop_parse->PushCell(hndl);
+				cell_t result = 0;
+				pop_parse->PushCellByRef(&result);
+				cell_t res = 0;
+				pop_parse->Execute(&res);
+
+				handlesys->FreeHandle(hndl, nullptr);
+
+				if(res == Pl_Changed) {
+					if(!result) {
+						return false;
+					}
+				} else if(res >= Pl_Handled) {
+					return false;
+				}
+			}
 		}
 		else
 		{
@@ -3706,7 +3862,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetMemSig("IsSpaceToSpawnHere", &IsSpaceToSpawnHerePtr);
 
 	g_pGameConf->GetMemSig("CPopulationManager::OnPlayerKilled", &CPopulationManagerOnPlayerKilled);
-	g_pGameConf->GetMemSig("g_pPopulationManager", &g_pPopulationManager);
+	g_pGameConf->GetMemSig("g_pPopulationManager", &g_pPopulationManagerPtr);
 	g_pGameConf->GetMemSig("CWaveSpawnPopulator::GetCurrencyAmountPerDeath", &CWaveSpawnPopulatorGetCurrencyAmountPerDeath);
 
 	g_pGameConf->GetMemSig("CSpawnLocation::Parse", &CSpawnLocationParse);
@@ -3740,6 +3896,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	popspawner_handle = handlesys->CreateType("popspawner", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
 	find_spawn_location = forwards->CreateForward("find_spawn_location", ET_Hook, 1, nullptr, Param_Array);
+	pop_parse = forwards->CreateForward("pop_parse", ET_Hook, 2, nullptr, Param_Cell, Param_CellByRef);
 	wavespawn_parse = forwards->CreateForward("wavespawn_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
 	wave_parse = forwards->CreateForward("wave_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
 	pop_event_fired = forwards->CreateForward("pop_event_fired", ET_Ignore, 1, nullptr, Param_String);
@@ -3766,6 +3923,7 @@ void Sample::SDK_OnUnload()
 	pStartCurrentWave->Destroy();
 	gameconfs->CloseGameConfigFile(g_pGameConf);
 	forwards->ReleaseForward(find_spawn_location);
+	forwards->ReleaseForward(pop_parse);
 	forwards->ReleaseForward(wavespawn_parse);
 	forwards->ReleaseForward(wave_parse);
 	forwards->ReleaseForward(pop_event_fired);

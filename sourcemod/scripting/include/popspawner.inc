@@ -55,6 +55,8 @@ methodmap IPopulator
 
 };
 
+#define IPopulator_Null (view_as<IPopulator>(Address_Null))
+
 methodmap IPopulationSpawner
 {
 	public native bool Parse(KeyValues data);
@@ -218,6 +220,8 @@ methodmap CWaveSpawnPopulator < IPopulator
 	}
 };
 
+#define CWaveSpawnPopulator_Null (view_as<CWaveSpawnPopulator>(Address_Null))
+
 methodmap CWave < IPopulator
 {
 	property float WaitWhenDone
@@ -225,8 +229,21 @@ methodmap CWave < IPopulator
 		public native get();
 		public native set(float value);
 	}
+
+	property int Index
+	{
+		public native get();
+	}
 };
 
+#define CWave_Null (view_as<CWave>(Address_Null))
+
+native float pop_health_multiplier(bool tank);
+native float pop_damage_multiplier();
+
+native CWave current_wave();
+
+forward Action pop_parse(KeyValues data, bool &result);
 forward Action wavespawn_parse(CWaveSpawnPopulator populator, KeyValues data, bool &result);
 forward Action wave_parse(CWave populator, KeyValues data, bool &result);
 
