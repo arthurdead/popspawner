@@ -3310,6 +3310,7 @@ bool CWave::DetourParse( KeyValues *data )
 			if ( wavePopulator->DetourParse( kvWave ) == false )
 			{
 				Warning( "Error reading WaveSpawn definition\n" );
+				delete wavePopulator;
 				return false;
 			}
 
@@ -3570,6 +3571,7 @@ bool CPopulationManager::DetourParse( void )
 			if ( randomPopulator->Parse( data ) == false )
 			{
 				Warning( "Error reading RandomPlacement definition\n" );
+				delete randomPopulator;
 				return false;
 			}
 
@@ -3582,6 +3584,7 @@ bool CPopulationManager::DetourParse( void )
 			if ( periodicPopulator->Parse( data ) == false )
 			{
 				Warning( "Error reading PeriodicSpawn definition\n" );
+				delete periodicPopulator;
 				return false;
 			}
 
@@ -3591,17 +3594,17 @@ bool CPopulationManager::DetourParse( void )
 		{
 			CWave *wave = CWave::create(this);
 
+			wave->getvars().index = members.m_waveVector.Count();
+
 			if ( !wave->DetourParse( data ) )
 			{
 				Warning( "Error reading Wave definition\n" );
+				delete wave;
 				return false;
 			}
 
-
 			// also keep vector of wave pointers for convenience
 			members.m_waveVector.AddToTail( wave );
-
-			wave->getvars().index = members.m_waveVector.Count()-1;
 		}
 		else if ( !Q_stricmp( name, "Mission" ) )
 		{
@@ -3610,6 +3613,7 @@ bool CPopulationManager::DetourParse( void )
 			if ( missionPopulator->Parse( data ) == false )
 			{
 				Warning( "Error reading Mission definition\n" );
+				delete missionPopulator;
 				return false;
 			}
 
