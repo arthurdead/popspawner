@@ -432,12 +432,24 @@ void *CBaseEntitySetAbsOrigin = nullptr;
 void *CBaseEntityCalcAbsolutePosition = nullptr;
 int m_vecAbsOriginOffset = -1;
 
+class CBasePlayer;
+
 class CBaseEntity : public IServerEntity
 {
 public:
 	int entindex()
 	{
 		return gamehelpers->EntityToBCompatRef(this);
+	}
+
+	CBasePlayer *IsPlayer()
+	{
+		int idx = gamehelpers->EntityToBCompatRef(this);
+		if(idx >= 1 && idx <= playerhelpers->GetNumPlayers()) {
+			return (CBasePlayer *)this;
+		} else {
+			return nullptr;
+		}
 	}
 
 	int GetParentAttachment()
@@ -2105,6 +2117,8 @@ populator_type_t get_populator_type(IPopulator *populator)
 	return populator_unknown;
 }
 
+IForward *pop_entity_spawned{nullptr};
+
 static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 {
 	IPopulationSpawner *spawner = META_IFACEPTR(IPopulationSpawner);
@@ -2114,24 +2128,24 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 	populator_type_t populator_type{get_populator_type(populator)};
 
 	if(result) {
-		int num_players = playerhelpers->GetNumPlayers();
-
 		int count = result->Count();
 		for(int i = 0; i < count; ++i) {
 			CBaseHandle &hndl = (*result)[i];
 
-			int entidx = hndl.GetEntryIndex();
-			if(entidx >= 1 && entidx <= num_players) {
-				continue;
-			}
-
-			CBaseEntity *pEntity{gamehelpers->ReferenceToEntity(entidx)};
+			CBaseEntity *pEntity{gamehelpers->ReferenceToEntity(hndl.GetEntryIndex())};
 			if(!pEntity) {
 				continue;
 			}
 
 			const char *classname{gamehelpers->GetEntityClassname(pEntity)};
-			if(strcmp(classname, "tank_boss") == 0) {
+
+			if(pop_entity_spawned->GetFunctionCount() > 0) {
+				pop_entity_spawned->PushCell(gamehelpers->EntityToBCompatRef(pEntity));
+				pop_entity_spawned->Execute(nullptr);
+			}
+
+			if(pEntity->IsPlayer() ||
+				strcmp(classname, "tank_boss") == 0) {
 				continue;
 			}
 
@@ -3726,13 +3740,11 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	popspawner_handle = handlesys->CreateType("popspawner", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
 	find_spawn_location = forwards->CreateForward("find_spawn_location", ET_Hook, 1, nullptr, Param_Array);
-
 	wavespawn_parse = forwards->CreateForward("wavespawn_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
 	wave_parse = forwards->CreateForward("wave_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
-
 	pop_event_fired = forwards->CreateForward("pop_event_fired", ET_Ignore, 1, nullptr, Param_String);
-
 	is_bonus_wave = forwards->CreateForward("is_bonus_wave", ET_Hook, 3, nullptr, Param_CellByRef, Param_CellByRef, Param_Array);
+	pop_entity_spawned = forwards->CreateForward("pop_entity_spawned", ET_Ignore, 1, nullptr, Param_Cell);
 
 	sharesys->AddNatives(myself, natives);
 	
@@ -3758,5 +3770,6 @@ void Sample::SDK_OnUnload()
 	forwards->ReleaseForward(wave_parse);
 	forwards->ReleaseForward(pop_event_fired);
 	forwards->ReleaseForward(is_bonus_wave);
+	forwards->ReleaseForward(pop_entity_spawned);
 	handlesys->RemoveType(popspawner_handle, myself->GetIdentity());
 }
