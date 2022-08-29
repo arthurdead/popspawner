@@ -2951,6 +2951,16 @@ cell_t current_wave(IPluginContext *pContext, const cell_t *params)
 	return 0;
 }
 
+cell_t current_wave_index(IPluginContext *pContext, const cell_t *params)
+{
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(PopulationManager) {
+		return PopulationManager->GetMembers().m_iCurrentWaveIndex;
+	}
+
+	return 0;
+}
+
 sp_nativeinfo_t natives[] =
 {
 	{"CustomPopulationSpawner.set_data", set_data},
@@ -3005,6 +3015,7 @@ sp_nativeinfo_t natives[] =
 	{"pop_health_multiplier", pop_health_multiplier},
 	{"pop_damage_multiplier", pop_damage_multiplier},
 	{"current_wave", current_wave},
+	{"current_wave_index", current_wave_index},
 	{NULL, NULL}
 };
 

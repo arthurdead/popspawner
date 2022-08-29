@@ -242,6 +242,7 @@ native float pop_health_multiplier(bool tank);
 native float pop_damage_multiplier();
 
 native CWave current_wave();
+native int current_wave_index();
 
 forward Action pop_parse(KeyValues data, bool &result);
 forward Action wavespawn_parse(CWaveSpawnPopulator populator, KeyValues data, bool &result);
