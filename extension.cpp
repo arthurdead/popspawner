@@ -1036,15 +1036,17 @@ enum RelativePositionType
 	ANYWHERE
 };
 
-void *CSpawnLocationParse = nullptr;
+void *CSpawnLocationParsePtr = nullptr;
 
 class CSpawnLocation
 {
 public:
 	bool Parse( KeyValues *data )
 	{
-		return call_mfunc<bool, CSpawnLocation, KeyValues *>(this, CSpawnLocationParse, data);
+		return call_mfunc<bool, CSpawnLocation, KeyValues *>(this, CSpawnLocationParsePtr, data);
 	}
+
+	bool DetourParse( KeyValues *data );
 
 	RelativePositionType m_relative;
 	TFTeamSpawnVector_t m_teamSpawnVector;
@@ -1053,6 +1055,107 @@ public:
 	int m_nRandomSeed;
 	bool m_bClosestPointOnNav;
 };
+
+class CTFTeamSpawn : public CBaseEntity
+{
+public:
+	
+};
+
+static CUtlVector<CTFTeamSpawn *> *m_ITFTeamSpawnAutoListAutoList{nullptr};
+
+IForward *spawnlocation_parse{nullptr};
+
+static IPopulator *last_populator{nullptr};
+
+#include "icandowhateveriwantthefactthattheresnowaytodothisstillisridiculous.h"
+
+bool CSpawnLocation::DetourParse( KeyValues *data )
+{
+	const char *name = data->GetName();
+	const char *value = data->GetString();
+
+	if ( Q_strlen( name ) <= 0 )
+	{
+		return false;
+	}
+
+	if ( FStrEq( name, "Where" ) || FStrEq( name, "ClosestPoint" ) )
+	{
+		if ( FStrEq( value, "Ahead" ) )
+		{
+			m_relative = AHEAD;
+		}
+		else if ( FStrEq( value, "Behind" ) )
+		{
+			m_relative = BEHIND;
+		}
+		else if ( FStrEq( value, "Anywhere" ) )
+		{
+			m_relative = ANYWHERE;
+		}
+		else if ( FStrEq( value, "PluginSpawnLocation" ) )
+		{
+			if(spawnlocation_parse->GetFunctionCount() > 0) {
+				HandleError err{};
+				Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
+				if(err != HandleError_None) {
+					smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+					return false;
+				}
+
+				spawnlocation_parse->PushCell((cell_t)last_populator);
+				spawnlocation_parse->PushCell((cell_t)this);
+				spawnlocation_parse->PushCell(hndl);
+				cell_t result = 0;
+				spawnlocation_parse->PushCellByRef(&result);
+				cell_t res = 0;
+				spawnlocation_parse->Execute(&res);
+
+				handlesys->FreeHandle(hndl, nullptr);
+
+				if(res == Pl_Changed) {
+					if(!result) {
+						return false;
+					}
+				} else if(res >= Pl_Handled) {
+					return false;
+				}
+			}
+		}
+		else
+		{
+			m_bClosestPointOnNav = FStrEq( name, "ClosestPoint" );
+
+			// collect entities with given name
+			bool bFound = false;
+			for ( int i=0; i<m_ITFTeamSpawnAutoListAutoList->Count(); ++i )
+			{
+				CTFTeamSpawn* pTeamSpawn = static_cast< CTFTeamSpawn* >( (*m_ITFTeamSpawnAutoListAutoList)[i] );
+				if ( FStrEq( STRING( pTeamSpawn->GetEntityName() ), value ) )
+				{
+					m_teamSpawnVector.AddToTail( pTeamSpawn );
+					bFound = true;
+				}
+			}
+
+			if ( !bFound )
+			{
+				Warning( "Invalid Where argument '%s'\n", value );
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+DETOUR_DECL_MEMBER1(SpawnLocationParse, bool, KeyValues *, values)
+{
+	return ((CSpawnLocation *)this)->CSpawnLocation::DetourParse(values);
+}
 
 enum SpawnLocationResult
 {
@@ -1407,8 +1510,6 @@ struct pop_entry_t
 	Handle_t hndl = BAD_HANDLE;
 };
 
-#include "icandowhateveriwantthefactthattheresnowaytodothisstillisridiculous.h"
-
 ConVar popspawner_maxiconlen("popspawner_maxiconlen", "260");
 
 class SPPopulationSpawner : public IPopulationSpawner
@@ -1539,6 +1640,10 @@ public:
 	
 	bool HasEventChangeAttributes( const char* pszEventName ) const
 	{
+		if(strcmp(pszEventName, "__hack_detect_spawner__") == 0) {
+			return true;
+		}
+
 		if(!entry) {
 			return false;
 		}
@@ -2650,6 +2755,17 @@ cell_t get_data_array(IPluginContext *pContext, const cell_t *params)
 	return 0;
 }
 
+cell_t CustomPopulationSpawnerEntryget(IPluginContext *pContext, const cell_t *params)
+{
+	SPPopulationSpawner *obj{(SPPopulationSpawner *)params[1]};
+
+	if(!obj->entry) {
+		return BAD_HANDLE;
+	}
+
+	return obj->entry->hndl;
+}
+
 cell_t IsSpaceToSpawnHere(IPluginContext *pContext, const cell_t *params)
 {
 	cell_t *addr = nullptr;
@@ -2722,6 +2838,12 @@ cell_t IPopulationSpawnerVariousget(IPluginContext *pContext, const cell_t *para
 	return obj->IsVarious();
 }
 
+cell_t IPopulationSpawnerCustomget(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	return obj->HasEventChangeAttributes("__hack_detect_spawner__");
+}
+
 cell_t IPopulationSpawnerPopulatorget(IPluginContext *pContext, const cell_t *params)
 {
 	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
@@ -2777,8 +2899,29 @@ cell_t IPopulationSpawnerGetClassIcon(IPluginContext *pContext, const cell_t *pa
 cell_t IPopulationSpawnerDelete(IPluginContext *pContext, const cell_t *params)
 {
 	IPopulationSpawner *obj{(IPopulationSpawner *)params[1]};
+	IPopulator *populator{obj->GetPopulator()};
+	if(populator && populator->m_spawner && populator->m_spawner == obj) {
+		populator->m_spawner = nullptr;
+	}
 	delete obj;
 	return 0;
+}
+
+cell_t IPopulatorHasEventChangeAttributes(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulator *obj{(IPopulator *)params[1]};
+
+	char *pszEventName{nullptr};
+	pContext->LocalToString(params[2], &pszEventName);
+
+	return obj->HasEventChangeAttributes(pszEventName);
+}
+
+cell_t IPopulatorSpawnerget(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulator *obj{(IPopulator *)params[1]};
+
+	return (cell_t)obj->m_spawner;
 }
 
 cell_t CWaveSpawnPopulatorTotalCountset(IPluginContext *pContext, const cell_t *params)
@@ -2968,6 +3111,7 @@ sp_nativeinfo_t natives[] =
 	{"CustomPopulationSpawner.has_data", has_data},
 	{"CustomPopulationSpawner.set_data_array", set_data_array},
 	{"CustomPopulationSpawner.get_data_array", get_data_array},
+	{"CustomPopulationSpawner.Entry.get", CustomPopulationSpawnerEntryget},
 	{"CustomPopulationSpawnerEntry.Parse.set", Parseset},
 	{"CustomPopulationSpawnerEntry.Spawn.set", Spawnset},
 	{"CustomPopulationSpawnerEntry.HasEventChangeAttributes.set", HasEventChangeAttributesset},
@@ -2986,6 +3130,7 @@ sp_nativeinfo_t natives[] =
 	{"IPopulationSpawner.Spawn", IPopulationSpawnerSpawn},
 	{"IPopulationSpawner.WhereRequired.get", IPopulationSpawnerWhereRequiredget},
 	{"IPopulationSpawner.Various.get", IPopulationSpawnerVariousget},
+	{"IPopulationSpawner.Custom.get", IPopulationSpawnerCustomget},
 	{"IPopulationSpawner.GetClass", IPopulationSpawnerGetClass},
 	{"IPopulationSpawner.GetHealth", IPopulationSpawnerGetHealth},
 	{"IPopulationSpawner.IsMiniBoss", IPopulationSpawnerIsMiniBoss},
@@ -2993,6 +3138,8 @@ sp_nativeinfo_t natives[] =
 	{"IPopulationSpawner.GetClassIcon", IPopulationSpawnerGetClassIcon},
 	{"IPopulationSpawner.Populator.get", IPopulationSpawnerPopulatorget},
 	{"IPopulationSpawner.Delete", IPopulationSpawnerDelete},
+	{"IPopulator.HasEventChangeAttributes", IPopulatorHasEventChangeAttributes},
+	{"IPopulator.Spawner.get", IPopulatorSpawnerget},
 	{"CWaveSpawnPopulator.TotalCount.set", CWaveSpawnPopulatorTotalCountset},
 	{"CWaveSpawnPopulator.TotalCount.get", CWaveSpawnPopulatorTotalCountget},
 	{"CWaveSpawnPopulator.MaxActive.set", CWaveSpawnPopulatorMaxActiveset},
@@ -3038,6 +3185,8 @@ IForward *wavespawn_parse = nullptr;
 DETOUR_DECL_MEMBER1(FindSpawnLocation, SpawnLocationResult, Vector &, vSpawnPosition)
 {
 	if(find_spawn_location->GetFunctionCount() > 0) {
+		find_spawn_location->PushCell((cell_t)last_populator);
+		find_spawn_location->PushCell((cell_t)this);
 		cell_t pos[3]{sp_ftoc(vSpawnPosition.x), sp_ftoc(vSpawnPosition.y), sp_ftoc(vSpawnPosition.z)};
 		find_spawn_location->PushArray(pos, 3, SM_PARAM_COPYBACK);
 		cell_t res = 0;
@@ -3150,7 +3299,7 @@ bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
 			continue;
 		}
 
-		if ( m_where.Parse( data ) )
+		if ( m_where.DetourParse( data ) )
 		{
 			continue;
 		}
@@ -3318,12 +3467,17 @@ bool CWave::DetourParse( KeyValues *data )
 		{
 			CWaveSpawnPopulator *wavePopulator = CWaveSpawnPopulator::create(GetManager());
 
+			last_populator = wavePopulator;
+
 			if ( wavePopulator->DetourParse( kvWave ) == false )
 			{
 				Warning( "Error reading WaveSpawn definition\n" );
 				delete wavePopulator;
+				last_populator = nullptr;
 				return false;
 			}
+
+			last_populator = nullptr;
 
 			m_waveSpawnVector.AddToTail( wavePopulator );
 
@@ -3579,12 +3733,17 @@ bool CPopulationManager::DetourParse( void )
 		{
 			CRandomPlacementPopulator *randomPopulator = CRandomPlacementPopulator::create(this);
 
+			last_populator = randomPopulator;
+
 			if ( randomPopulator->Parse( data ) == false )
 			{
 				Warning( "Error reading RandomPlacement definition\n" );
 				delete randomPopulator;
+				last_populator = nullptr;
 				return false;
 			}
+
+			last_populator = nullptr;
 
 			members.m_populatorVector.AddToTail( randomPopulator );
 		}
@@ -3592,12 +3751,17 @@ bool CPopulationManager::DetourParse( void )
 		{
 			CPeriodicSpawnPopulator *periodicPopulator = CPeriodicSpawnPopulator::create(this);
 
+			last_populator = periodicPopulator;
+
 			if ( periodicPopulator->Parse( data ) == false )
 			{
 				Warning( "Error reading PeriodicSpawn definition\n" );
 				delete periodicPopulator;
+				last_populator = nullptr;
 				return false;
 			}
+
+			last_populator = nullptr;
 
 			members.m_populatorVector.AddToTail( periodicPopulator );
 		}
@@ -3607,12 +3771,17 @@ bool CPopulationManager::DetourParse( void )
 
 			wave->getvars().index = members.m_waveVector.Count();
 
+			last_populator = wave;
+
 			if ( !wave->DetourParse( data ) )
 			{
 				Warning( "Error reading Wave definition\n" );
 				delete wave;
+				last_populator = nullptr;
 				return false;
 			}
+
+			last_populator = nullptr;
 
 			// also keep vector of wave pointers for convenience
 			members.m_waveVector.AddToTail( wave );
@@ -3621,12 +3790,17 @@ bool CPopulationManager::DetourParse( void )
 		{
 			CMissionPopulator *missionPopulator = CMissionPopulator::create(this);
 
+			last_populator = missionPopulator;
+
 			if ( missionPopulator->Parse( data ) == false )
 			{
 				Warning( "Error reading Mission definition\n" );
 				delete missionPopulator;
+				last_populator = nullptr;
 				return false;
 			}
+
+			last_populator = nullptr;
 
 			members.m_populatorVector.AddToTail( missionPopulator );
 		}
@@ -3831,6 +4005,7 @@ CDetour *pKeyValuesLoadFromFile{nullptr};
 CDetour *pWaveParse{nullptr};
 CDetour *pFireEvent{nullptr};
 CDetour *pStartCurrentWave{nullptr};
+CDetour *pSpawnLocationParse{nullptr};
 
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
@@ -3853,6 +4028,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	pFindSpawnLocation = DETOUR_CREATE_MEMBER(FindSpawnLocation, "CSpawnLocation::FindSpawnLocation")
 	pFindSpawnLocation->EnableDetour();
+
+	pSpawnLocationParse = DETOUR_CREATE_MEMBER(SpawnLocationParse, "CSpawnLocation::Parse")
+	pSpawnLocationParse->EnableDetour();
 
 	pWaveSpawnPopulatorParse = DETOUR_CREATE_MEMBER(WaveSpawnPopulatorParse, "CWaveSpawnPopulator::Parse")
 	pWaveSpawnPopulatorParse->EnableDetour();
@@ -3880,7 +4058,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetMemSig("g_pPopulationManager", &g_pPopulationManagerPtr);
 	g_pGameConf->GetMemSig("CWaveSpawnPopulator::GetCurrencyAmountPerDeath", &CWaveSpawnPopulatorGetCurrencyAmountPerDeath);
 
-	g_pGameConf->GetMemSig("CSpawnLocation::Parse", &CSpawnLocationParse);
+	g_pGameConf->GetMemSig("CSpawnLocation::Parse", &CSpawnLocationParsePtr);
+
+	g_pGameConf->GetMemSig("ITFTeamSpawnAutoList::m_ITFTeamSpawnAutoListAutoList", (void **)&m_ITFTeamSpawnAutoListAutoList);
 
 	g_pGameConf->GetMemSig("CWaveSpawnPopulator::CWaveSpawnPopulator", &CWaveSpawnPopulatorCTOR);
 	g_pGameConf->GetMemSig("CRandomPlacementPopulator::CRandomPlacementPopulator", &CRandomPlacementPopulatorCTOR);
@@ -3914,6 +4094,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	pop_parse = forwards->CreateForward("pop_parse", ET_Hook, 2, nullptr, Param_Cell, Param_CellByRef);
 	wavespawn_parse = forwards->CreateForward("wavespawn_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
 	wave_parse = forwards->CreateForward("wave_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
+	spawnlocation_parse = forwards->CreateForward("spawnlocation_parse", ET_Hook, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_CellByRef);
 	pop_event_fired = forwards->CreateForward("pop_event_fired", ET_Ignore, 1, nullptr, Param_String);
 	is_bonus_wave = forwards->CreateForward("is_bonus_wave", ET_Hook, 3, nullptr, Param_CellByRef, Param_CellByRef, Param_Array);
 	pop_entity_spawned = forwards->CreateForward("pop_entity_spawned", ET_Ignore, 1, nullptr, Param_Cell);
@@ -3941,6 +4122,7 @@ void Sample::SDK_OnUnload()
 	forwards->ReleaseForward(pop_parse);
 	forwards->ReleaseForward(wavespawn_parse);
 	forwards->ReleaseForward(wave_parse);
+	forwards->ReleaseForward(spawnlocation_parse);
 	forwards->ReleaseForward(pop_event_fired);
 	forwards->ReleaseForward(is_bonus_wave);
 	forwards->ReleaseForward(pop_entity_spawned);

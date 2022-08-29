@@ -52,7 +52,12 @@ typedef del_func_t = function void (CustomPopulationSpawner spawner);
 
 methodmap IPopulator
 {
+	public native bool HasEventChangeAttributes(const char[] pszEventName);
 
+	property IPopulationSpawner Spawner
+	{
+		public native get();
+	}
 };
 
 #define IPopulator_Null (view_as<IPopulator>(Address_Null))
@@ -84,6 +89,11 @@ methodmap IPopulationSpawner
 		public native get();
 	}
 
+	property bool Custom
+	{
+		public native get();
+	}
+
 	public native void Delete();
 };
 
@@ -98,10 +108,10 @@ methodmap CustomPopulationSpawner < IPopulationSpawner
 	public native void set_data_array(const char[] name, any[] data, int len);
 	public native void get_data_array(const char[] name, any[] data, int len);
 
-	/*property CustomPopulationSpawnerEntry Entry
+	property CustomPopulationSpawnerEntry Entry
 	{
 		public native get();
-	}*/
+	}
 };
 
 methodmap CustomPopulationSpawnerEntry
@@ -167,7 +177,12 @@ native IPopulationSpawner create_spawner(const char[] name, IPopulator populator
 
 native bool IsSpaceToSpawnHere(const float pos[3]);
 
-forward Action find_spawn_location(float pos[3]);
+methodmap SpawnLocation
+{
+
+};
+
+forward Action find_spawn_location(IPopulator populator, SpawnLocation location, float pos[3]);
 
 methodmap CWaveSpawnPopulator < IPopulator
 {
@@ -247,6 +262,7 @@ native int current_wave_index();
 forward Action pop_parse(KeyValues data, bool &result);
 forward Action wavespawn_parse(CWaveSpawnPopulator populator, KeyValues data, bool &result);
 forward Action wave_parse(CWave populator, KeyValues data, bool &result);
+forward Action spawnlocation_parse(IPopulator populator, SpawnLocation location, KeyValues data, bool &result);
 
 forward Action is_bonus_wave(bool &result, int &boss, float pos[3]);
 

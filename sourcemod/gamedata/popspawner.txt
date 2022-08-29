@@ -134,6 +134,11 @@
 				"library" "server"
 				"linux" "@_ZL10ParseEventP9KeyValues"
 			}
+			"ITFTeamSpawnAutoList::m_ITFTeamSpawnAutoListAutoList"
+			{
+				"library" "server"
+				"linux" "@_ZN20ITFTeamSpawnAutoList30m_ITFTeamSpawnAutoListAutoListE"
+			}
 		}
 	}
 }
