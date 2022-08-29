@@ -3094,9 +3094,9 @@ IForward *pop_event_fired{nullptr};
 	ret callconv (*name##_Actual)(p1type, p2type) = NULL; \
 	ret callconv name(p1type p1name, p2type p2name)
 
-static EventInfo *  ParseEvent( KeyValues *values )
+static EventInfo * __attribute__((__regparm__(1))) ParseEvent( KeyValues *values )
 {
-	return (void_to_func<EventInfo *  (*)(KeyValues *)>(ParseEventPtr))(values);
+	return (void_to_func<EventInfo * __attribute__((__regparm__(1))) (*)(KeyValues *)>(ParseEventPtr))(values);
 }
 
 DETOUR_DECL_STATIC2_callconv(FireEvent, void, __attribute__((__regparm__(2))), EventInfo *,eventInfo, const char *,eventName)
