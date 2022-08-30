@@ -1060,6 +1060,8 @@ public:
 	{
 		return call_mfunc<bool, CPopulationManager>(this, CPopulationManagerInitialize);
 	}
+
+	void AddPopulator(IPopulator *populator);
 };
 
 CPopulationManager *GetPopulationManager()
@@ -1498,6 +1500,8 @@ public:
 	bool DetourParse( KeyValues *data );
 
 	bool ParseAdditive( KeyValues *data );
+
+	void AddWaveSpawn( CWaveSpawnPopulator *pop );
 
 	void AddClassType( string_t iszClassIconName, int nCount, unsigned int iFlags )
 	{
@@ -3115,6 +3119,15 @@ cell_t CWaveParseAdditive(IPluginContext *pContext, const cell_t *params)
 	return obj->ParseAdditive(pKv);
 }
 
+cell_t CWaveAddWaveSpawn(IPluginContext *pContext, const cell_t *params)
+{
+	CWave *obj{(CWave *)params[1]};
+	CWaveSpawnPopulator *wavePopulator{(CWaveSpawnPopulator *)params[2]};
+
+	obj->AddWaveSpawn(wavePopulator);
+	return 0;
+}
+
 cell_t IPopulatorSpawnerget(IPluginContext *pContext, const cell_t *params)
 {
 	IPopulator *obj{(IPopulator *)params[1]};
@@ -3338,7 +3351,7 @@ cell_t SpawnLocationRelativeset(IPluginContext *pContext, const cell_t *params)
 cell_t set_pop_filename(IPluginContext *pContext, const cell_t *params)
 {
 	CPopulationManager *PopulationManager{GetPopulationManager()};
-	if(PopulationManager) {
+	if(!PopulationManager) {
 		return 0;
 	}
 
@@ -3353,7 +3366,7 @@ cell_t set_pop_filename(IPluginContext *pContext, const cell_t *params)
 cell_t init_pop(IPluginContext *pContext, const cell_t *params)
 {
 	CPopulationManager *PopulationManager{GetPopulationManager()};
-	if(PopulationManager) {
+	if(!PopulationManager) {
 		return 0;
 	}
 
@@ -3363,7 +3376,7 @@ cell_t init_pop(IPluginContext *pContext, const cell_t *params)
 cell_t merge_pop(IPluginContext *pContext, const cell_t *params)
 {
 	CPopulationManager *PopulationManager{GetPopulationManager()};
-	if(PopulationManager) {
+	if(!PopulationManager) {
 		return 0;
 	}
 
@@ -3371,6 +3384,18 @@ cell_t merge_pop(IPluginContext *pContext, const cell_t *params)
 	pContext->LocalToString(params[1], &populationFile);
 
 	return PopulationManager->ParseAdditive(populationFile);
+}
+
+cell_t add_populator(IPluginContext *pContext, const cell_t *params)
+{
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(!PopulationManager) {
+		return 0;
+	}
+
+	IPopulator *populator{(IPopulator *)params[1]};
+	PopulationManager->AddPopulator(populator);
+	return 1;
 }
 
 sp_nativeinfo_t natives[] =
@@ -3431,6 +3456,7 @@ sp_nativeinfo_t natives[] =
 	{"CWave.WaitWhenDone.get", CWaveWaitWhenDoneget},
 	{"CWave.Index.get", CWaveIndexget},
 	{"CWave.ParseAdditive", CWaveParseAdditive},
+	{"CWave.AddWaveSpawn", CWaveAddWaveSpawn},
 	{"pop_health_multiplier", pop_health_multiplier},
 	{"pop_damage_multiplier", pop_damage_multiplier},
 	{"current_wave", current_wave},
@@ -3442,6 +3468,7 @@ sp_nativeinfo_t natives[] =
 	{"set_pop_filename", set_pop_filename},
 	{"init_pop", init_pop},
 	{"merge_pop", merge_pop},
+	{"add_populator", add_populator},
 	{NULL, NULL}
 };
 
@@ -3803,6 +3830,61 @@ DETOUR_DECL_MEMBER1(WaveSpawnPopulatorParse, bool, KeyValues *, values)
 
 IForward *wave_parse{nullptr};
 
+void CWave::AddWaveSpawn( CWaveSpawnPopulator *wavePopulator )
+{
+	m_waveSpawnVector.AddToTail( wavePopulator );
+
+	if ( !wavePopulator->IsSupportWave() )
+	{
+		// this is a total of all enemies we have to fight that are NOT support enemies
+		m_iEnemyCount += wavePopulator->m_totalCount;
+	}
+	m_totalCurrency += wavePopulator->m_totalCurrency;
+
+	wavePopulator->SetParent( this );
+
+	if ( wavePopulator->m_spawner )
+	{
+		if ( wavePopulator->m_spawner->IsVarious() )
+		{
+			for ( int i = 0; i < wavePopulator->m_totalCount; ++i )
+			{
+				unsigned int iFlags = wavePopulator->IsSupportWave() ? MVM_CLASS_FLAG_SUPPORT : MVM_CLASS_FLAG_NORMAL;
+				if ( wavePopulator->m_spawner->IsMiniBoss( i ) )
+				{
+					iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+				}
+				if ( wavePopulator->m_spawner->HasAttribute( ALWAYS_CRIT, i ) )
+				{
+					iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
+				}
+				if ( wavePopulator->IsLimitedSupportWave() )
+				{
+					iFlags |= MVM_CLASS_FLAG_SUPPORT_LIMITED;
+				}
+				AddClassType( wavePopulator->m_spawner->GetClassIcon( i ), 1, iFlags );
+			}
+		}
+		else
+		{
+			unsigned int iFlags = wavePopulator->IsSupportWave() ? MVM_CLASS_FLAG_SUPPORT : MVM_CLASS_FLAG_NORMAL;
+			if ( wavePopulator->m_spawner->IsMiniBoss() )
+			{
+				iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+			}
+			if ( wavePopulator->m_spawner->HasAttribute( ALWAYS_CRIT ) )
+			{
+				iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
+			}
+			if ( wavePopulator->IsLimitedSupportWave() )
+			{
+				iFlags |= MVM_CLASS_FLAG_SUPPORT_LIMITED;
+			}
+			AddClassType( wavePopulator->m_spawner->GetClassIcon(), wavePopulator->m_totalCount, iFlags );
+		}
+	}
+}
+
 bool CWave::ParseAdditive( KeyValues *data )
 {
 	FOR_EACH_SUBKEY( data, kvWave )
@@ -3823,57 +3905,7 @@ bool CWave::ParseAdditive( KeyValues *data )
 
 			last_populator = nullptr;
 
-			m_waveSpawnVector.AddToTail( wavePopulator );
-
-			if ( !wavePopulator->IsSupportWave() )
-			{
-				// this is a total of all enemies we have to fight that are NOT support enemies
-				m_iEnemyCount += wavePopulator->m_totalCount;
-			}
-			m_totalCurrency += wavePopulator->m_totalCurrency;
-
-			wavePopulator->SetParent( this );
-
-			if ( wavePopulator->m_spawner )
-			{
-				if ( wavePopulator->m_spawner->IsVarious() )
-				{
-					for ( int i = 0; i < wavePopulator->m_totalCount; ++i )
-					{
-						unsigned int iFlags = wavePopulator->IsSupportWave() ? MVM_CLASS_FLAG_SUPPORT : MVM_CLASS_FLAG_NORMAL;
-						if ( wavePopulator->m_spawner->IsMiniBoss( i ) )
-						{
-							iFlags |= MVM_CLASS_FLAG_MINIBOSS;
-						}
-						if ( wavePopulator->m_spawner->HasAttribute( ALWAYS_CRIT, i ) )
-						{
-							iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
-						}
-						if ( wavePopulator->IsLimitedSupportWave() )
-						{
-							iFlags |= MVM_CLASS_FLAG_SUPPORT_LIMITED;
-						}
-						AddClassType( wavePopulator->m_spawner->GetClassIcon( i ), 1, iFlags );
-					}
-				}
-				else
-				{
-					unsigned int iFlags = wavePopulator->IsSupportWave() ? MVM_CLASS_FLAG_SUPPORT : MVM_CLASS_FLAG_NORMAL;
-					if ( wavePopulator->m_spawner->IsMiniBoss() )
-					{
-						iFlags |= MVM_CLASS_FLAG_MINIBOSS;
-					}
-					if ( wavePopulator->m_spawner->HasAttribute( ALWAYS_CRIT ) )
-					{
-						iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
-					}
-					if ( wavePopulator->IsLimitedSupportWave() )
-					{
-						iFlags |= MVM_CLASS_FLAG_SUPPORT_LIMITED;
-					}
-					AddClassType( wavePopulator->m_spawner->GetClassIcon(), wavePopulator->m_totalCount, iFlags );
-				}
-			}
+			AddWaveSpawn( wavePopulator );
 		}
 		else if ( !Q_stricmp( kvWave->GetName(), "Sound" ) )
 		{
@@ -3992,6 +4024,44 @@ public:
 };
 
 IForward *pop_parse{nullptr};
+
+void CPopulationManager::AddPopulator(IPopulator *populator)
+{
+	CPopulationManager_members_t &members{GetMembers()};
+
+	members.m_populatorVector.AddToTail( populator );
+
+	CMissionPopulator *pMission = ((get_populator_type(populator) == populator_mission) ? (CMissionPopulator *)populator : nullptr);
+
+	if ( pMission )
+	{
+		// FIXME: Need a way to handle missions that spawn multiple types
+		int nStartWave = pMission->BeginAtWave();
+		int nStopWave = pMission->StopAtWave();
+
+		if ( pMission->m_spawner && !pMission->m_spawner->IsVarious() )
+		{
+			for ( int i = nStartWave; i < nStopWave; ++i )
+			{
+				if ( members.m_waveVector.IsValidIndex( i ) )
+				{
+					CWave *pWave = members.m_waveVector[ i ];
+				
+					unsigned int iFlags = MVM_CLASS_FLAG_MISSION;
+					if ( pMission->m_spawner->IsMiniBoss() )
+					{
+						iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+					}
+					if ( pMission->m_spawner->HasAttribute( ALWAYS_CRIT ) )
+					{
+						iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
+					}
+					pWave->AddClassType( pMission->m_spawner->GetClassIcon(), 0, iFlags );
+				}
+			}
+		}
+	}
+}
 
 bool CPopulationManager::ParseAdditive( const char *populationFile )
 {

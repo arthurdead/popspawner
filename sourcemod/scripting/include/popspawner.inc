@@ -274,6 +274,8 @@ methodmap CWave < IPopulator
 {
 	public native bool ParseAdditive(KeyValues data);
 
+	public native void AddWaveSpawn(CWaveSpawnPopulator wavePopulator);
+
 	property float WaitWhenDone
 	{
 		public native get();
@@ -297,6 +299,8 @@ native int current_wave_index();
 native bool init_pop();
 native bool set_pop_filename(const char[] path);
 native bool merge_pop(const char[] path);
+
+native bool add_populator(IPopulator populator);
 
 forward Action pop_parse(KeyValues data, bool &result);
 forward Action wavespawn_parse(CWaveSpawnPopulator populator, KeyValues data, bool &result);
