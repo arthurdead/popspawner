@@ -286,7 +286,7 @@ forward Action is_bonus_wave(bool &result, int &boss, float pos[3]);
 
 forward void pop_event_fired(const char[] name);
 
-forward void pop_entity_spawned(int entity);
+forward void pop_entity_spawned(IPopulator populator, IPopulationSpawner spawner, SpawnLocation location, int entity);
 
 #if !defined REQUIRE_EXTENSIONS
 public void __ext_popspawner_SetNTVOptional()

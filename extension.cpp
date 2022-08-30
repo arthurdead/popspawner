@@ -1213,35 +1213,6 @@ bool CSpawnLocation::DetourParse( KeyValues *data )
 		{
 			m_relative = ANYWHERE;
 		}
-		else if ( FStrEq( value, "PluginSpawnLocation" ) )
-		{
-			if(spawnlocation_parse->GetFunctionCount() > 0) {
-				HandleError err{};
-				Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
-				if(err != HandleError_None) {
-					smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
-					return false;
-				}
-
-				spawnlocation_parse->PushCell((cell_t)last_populator);
-				spawnlocation_parse->PushCell((cell_t)this);
-				spawnlocation_parse->PushCell(hndl);
-				cell_t result = 0;
-				spawnlocation_parse->PushCellByRef(&result);
-				cell_t res = 0;
-				spawnlocation_parse->Execute(&res);
-
-				handlesys->FreeHandle(hndl, nullptr);
-
-				if(res == Pl_Changed) {
-					if(!result) {
-						return false;
-					}
-				} else if(res >= Pl_Handled) {
-					return false;
-				}
-			}
-		}
 		else
 		{
 			m_bClosestPointOnNav = FStrEq( name, "ClosestPoint" );
@@ -1262,6 +1233,37 @@ bool CSpawnLocation::DetourParse( KeyValues *data )
 			if ( !bFound )
 			{
 				Warning( "Invalid Where argument '%s'\n", value );
+				return false;
+			}
+		}
+
+		return true;
+	}
+	else if ( FStrEq( name, "PluginSpawnLocation" ) )
+	{
+		if(spawnlocation_parse->GetFunctionCount() > 0) {
+			HandleError err{};
+			Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
+			if(err != HandleError_None) {
+				smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+				return false;
+			}
+
+			spawnlocation_parse->PushCell((cell_t)last_populator);
+			spawnlocation_parse->PushCell((cell_t)this);
+			spawnlocation_parse->PushCell(hndl);
+			cell_t result = 0;
+			spawnlocation_parse->PushCellByRef(&result);
+			cell_t res = 0;
+			spawnlocation_parse->Execute(&res);
+
+			handlesys->FreeHandle(hndl, nullptr);
+
+			if(res == Pl_Changed) {
+				if(!result) {
+					return false;
+				}
+			} else if(res >= Pl_Handled) {
 				return false;
 			}
 		}
@@ -2410,6 +2412,8 @@ populator_type_t get_populator_type(IPopulator *populator)
 
 IForward *pop_entity_spawned{nullptr};
 
+CSpawnLocation *last_location{nullptr};
+
 static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 {
 	IPopulationSpawner *spawner = META_IFACEPTR(IPopulationSpawner);
@@ -2431,6 +2435,9 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 			const char *classname{gamehelpers->GetEntityClassname(pEntity)};
 
 			if(pop_entity_spawned->GetFunctionCount() > 0) {
+				pop_entity_spawned->PushCell((cell_t)populator);
+				pop_entity_spawned->PushCell((cell_t)spawner);
+				pop_entity_spawned->PushCell((cell_t)last_location);
 				pop_entity_spawned->PushCell(gamehelpers->EntityToBCompatRef(pEntity));
 				pop_entity_spawned->Execute(nullptr);
 			}
@@ -3343,6 +3350,8 @@ void Shuffle( CUtlVector<T, A> &vec, IUniformRandomStream* pSteam )
 
 SpawnLocationResult CSpawnLocation::DetourFindSpawnLocation( Vector& vSpawnPosition )
 {
+	last_location = this;
+
 	TFTeamSpawnVector_t activeSpawn;
 	for ( int i=0; i<m_teamSpawnVector.Count(); ++i )
 	{
@@ -4302,7 +4311,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	spawnlocation_parse = forwards->CreateForward("spawnlocation_parse", ET_Hook, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_CellByRef);
 	pop_event_fired = forwards->CreateForward("pop_event_fired", ET_Ignore, 1, nullptr, Param_String);
 	is_bonus_wave = forwards->CreateForward("is_bonus_wave", ET_Hook, 3, nullptr, Param_CellByRef, Param_CellByRef, Param_Array);
-	pop_entity_spawned = forwards->CreateForward("pop_entity_spawned", ET_Ignore, 1, nullptr, Param_Cell);
+	pop_entity_spawned = forwards->CreateForward("pop_entity_spawned", ET_Ignore, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_Cell);
 
 	sharesys->AddNatives(myself, natives);
 	
