@@ -54,6 +54,7 @@ enum populator_type_t
 {
 	populator_none,
 	populator_unknown,
+	populator_wave,
 	populator_wavespawn,
 	populator_mission,
 };
@@ -73,6 +74,8 @@ methodmap IPopulator
 	{
 		public native get();
 	}
+
+	public native void Delete();
 };
 
 #define IPopulator_Null (view_as<IPopulator>(Address_Null))
@@ -189,6 +192,7 @@ methodmap CustomPopulationSpawnerEntry
 
 native CustomPopulationSpawnerEntry register_popspawner(const char[] name);
 native IPopulationSpawner create_spawner(const char[] name, IPopulator populator, KeyValues data = null);
+native IPopulator create_populator(const char[] name, KeyValues data);
 
 native bool IsSpaceToSpawnHere(const float pos[3]);
 

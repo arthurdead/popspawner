@@ -1105,6 +1105,7 @@ enum populator_type_t
 {
 	populator_none,
 	populator_unknown,
+	populator_wave,
 	populator_wavespawn,
 	populator_mission,
 };
@@ -1486,13 +1487,25 @@ public:
 		call_mfunc<void, CWave, CPopulationManager *>(bytes, CWaveCTOR, pManager);
 		new (bytes->vars_ptr()) vars_t{};
 		SH_ADD_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(bytes, &CWave::dtor), false);
+		SH_ADD_HOOK(IPopulator, HasEventChangeAttributes, bytes, SH_MEMBER(bytes, &CWave::HookHasEventChangeAttributes), false);
 		return bytes;
+	}
+
+	bool HookHasEventChangeAttributes( const char* pszEventName ) const
+	{
+		if(strcmp(pszEventName, "__hack_detect_populator__") == 0) {
+			g_hackdetectpopulator = populator_wave;
+			RETURN_META_VALUE(MRES_SUPERCEDE, false);
+		}
+
+		RETURN_META_VALUE(MRES_IGNORED, false);
 	}
 
 	void dtor()
 	{
 		CWave *bytes = META_IFACEPTR(CWave);
 		bytes->getvars().~vars_t();
+		SH_REMOVE_HOOK(IPopulator, HasEventChangeAttributes, bytes, SH_MEMBER(this, &CWave::HookHasEventChangeAttributes), false);
 		SH_REMOVE_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(this, &CWave::dtor), false);
 		RETURN_META(MRES_HANDLED);
 	}
@@ -1560,6 +1573,46 @@ public:
 
 	bool m_isEveryContainedWaveSpawnDone;
 	float m_flStartTime;
+};
+
+enum 
+{
+	MVM_EVENT_POPFILE_NONE = 0,
+	MVM_EVENT_POPFILE_HALLOWEEN,
+
+	MVM_EVENT_POPFILE_MAX_TYPES,
+};
+
+class CRandomPlacementPopulator : public IPopulator
+{
+public:
+	static CRandomPlacementPopulator *create(CPopulationManager *pManager)
+	{
+		CRandomPlacementPopulator *bytes = (CRandomPlacementPopulator *)calloc(1, sizeof(CRandomPlacementPopulator));
+		call_mfunc<void, CRandomPlacementPopulator, CPopulationManager *>(bytes, CRandomPlacementPopulatorCTOR, pManager);
+		return bytes;
+	}
+
+	int m_count;
+	float m_minSeparation;
+	unsigned int m_navAreaFilter;
+};
+
+class CPeriodicSpawnPopulator : public IPopulator
+{
+public:
+	static CPeriodicSpawnPopulator *create(CPopulationManager *pManager)
+	{
+		CPeriodicSpawnPopulator *bytes = (CPeriodicSpawnPopulator *)calloc(1, sizeof(CPeriodicSpawnPopulator));
+		call_mfunc<void, CPeriodicSpawnPopulator, CPopulationManager *>(bytes, CPeriodicSpawnPopulatorCTOR, pManager);
+		return bytes;
+	}
+
+	CSpawnLocation m_where;
+	float m_minInterval;
+	float m_maxInterval;
+
+	CountdownTimer m_timer;
 };
 
 class IPopulationSpawner
@@ -2575,6 +2628,104 @@ static void hook_spawner_dtor()
 	RETURN_META(MRES_HANDLED);
 }
 
+IPopulator *ParsePopulator(CPopulationManager *PopulationManager, const char *name, KeyValues *data)
+{
+	if ( !Q_stricmp( name, "WaveSpawn" ) )
+	{
+		CWaveSpawnPopulator *wavePopulator = CWaveSpawnPopulator::create(PopulationManager);
+
+		last_populator = wavePopulator;
+
+		if ( wavePopulator->DetourParse( data ) == false )
+		{
+			Warning( "Error reading WaveSpawn definition\n" );
+			delete wavePopulator;
+			last_populator = nullptr;
+			return nullptr;
+		}
+
+		last_populator = nullptr;
+
+		return wavePopulator;
+	}
+	else if ( !Q_stricmp( name, "RandomPlacement" ) )
+	{
+		CRandomPlacementPopulator *randomPopulator = CRandomPlacementPopulator::create(PopulationManager);
+
+		last_populator = randomPopulator;
+
+		if ( randomPopulator->Parse( data ) == false )
+		{
+			Warning( "Error reading RandomPlacement definition\n" );
+			delete randomPopulator;
+			last_populator = nullptr;
+			return nullptr;
+		}
+
+		last_populator = nullptr;
+
+		return randomPopulator;
+	}
+	else if ( !Q_stricmp( name, "PeriodicSpawn" ) )
+	{
+		CPeriodicSpawnPopulator *periodicPopulator = CPeriodicSpawnPopulator::create(PopulationManager);
+
+		last_populator = periodicPopulator;
+
+		if ( periodicPopulator->Parse( data ) == false )
+		{
+			Warning( "Error reading PeriodicSpawn definition\n" );
+			delete periodicPopulator;
+			last_populator = nullptr;
+			return nullptr;
+		}
+
+		last_populator = nullptr;
+
+		return periodicPopulator;
+	}
+	else if ( !Q_stricmp( name, "Wave" ) )
+	{
+		CWave *wave = CWave::create(PopulationManager);
+
+		wave->getvars().index = PopulationManager->GetMembers().m_waveVector.Count();
+
+		last_populator = wave;
+
+		if ( !wave->DetourParse( data ) )
+		{
+			Warning( "Error reading Wave definition\n" );
+			delete wave;
+			last_populator = nullptr;
+			return nullptr;
+		}
+
+		last_populator = nullptr;
+
+		return wave;
+	}
+	else if ( !Q_stricmp( name, "Mission" ) )
+	{
+		CMissionPopulator *missionPopulator = CMissionPopulator::create(PopulationManager);
+
+		last_populator = missionPopulator;
+
+		if ( missionPopulator->Parse( data ) == false )
+		{
+			Warning( "Error reading Mission definition\n" );
+			delete missionPopulator;
+			last_populator = nullptr;
+			return nullptr;
+		}
+
+		last_populator = nullptr;
+
+		return missionPopulator;
+	}
+
+	return nullptr;
+}
+
 DETOUR_DECL_STATIC2(ParseSpawner, IPopulationSpawner *, IPopulator *, populator, KeyValues *, data)
 {
 	IPopulationSpawner *spawner = DETOUR_STATIC_CALL(ParseSpawner)(populator, data);
@@ -2648,6 +2799,25 @@ cell_t create_spawner(IPluginContext *pContext, const cell_t *params)
 		pKv->deleteThis();
 		return ret;
 	}
+}
+
+cell_t create_populator(IPluginContext *pContext, const cell_t *params)
+{
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(!PopulationManager) {
+		return 0;
+	}
+
+	char *name_ptr = nullptr;
+	pContext->LocalToString(params[1], &name_ptr);
+
+	HandleError err{};
+	KeyValues *pKv = smutils->ReadKeyValuesHandle(params[2], &err);
+	if(err != HandleError_None) {
+		return pContext->ThrowNativeError("Invalid KeyValues handle %x (error %d).", params[2], err);
+	}
+
+	return (cell_t)ParsePopulator(PopulationManager, name_ptr, pKv);
 }
 
 cell_t Parseset(IPluginContext *pContext, const cell_t *params)
@@ -3083,6 +3253,14 @@ cell_t IPopulationSpawnerDelete(IPluginContext *pContext, const cell_t *params)
 	return 0;
 }
 
+cell_t IPopulatorDelete(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulator *obj{(IPopulator *)params[1]};
+	//TODO!!! cleanup references
+	delete obj;
+	return 0;
+}
+
 cell_t IPopulatorHasEventChangeAttributes(IPluginContext *pContext, const cell_t *params)
 {
 	IPopulator *obj{(IPopulator *)params[1]};
@@ -3419,6 +3597,7 @@ sp_nativeinfo_t natives[] =
 	{"CustomPopulationSpawnerEntry.Delete.set", Deleteset},
 	{"register_popspawner", register_popspawner},
 	{"create_spawner", create_spawner},
+	{"create_populator", create_populator},
 	{"IsSpaceToSpawnHere", IsSpaceToSpawnHere},
 	{"IPopulationSpawner.Parse", IPopulationSpawnerParse},
 	{"IPopulationSpawner.Spawn", IPopulationSpawnerSpawn},
@@ -3432,6 +3611,7 @@ sp_nativeinfo_t natives[] =
 	{"IPopulationSpawner.GetClassIcon", IPopulationSpawnerGetClassIcon},
 	{"IPopulationSpawner.Populator.get", IPopulationSpawnerPopulatorget},
 	{"IPopulationSpawner.Delete", IPopulationSpawnerDelete},
+	{"IPopulator.Delete", IPopulatorDelete},
 	{"IPopulator.HasEventChangeAttributes", IPopulatorHasEventChangeAttributes},
 	{"IPopulator.Parse", IPopulatorParse},
 	{"IPopulator.Spawner.get", IPopulatorSpawnerget},
@@ -3983,83 +4163,55 @@ bool CWave::DetourParse( KeyValues *data )
 	return ParseAdditive(data);
 }
 
-enum 
-{
-	MVM_EVENT_POPFILE_NONE = 0,
-	MVM_EVENT_POPFILE_HALLOWEEN,
-
-	MVM_EVENT_POPFILE_MAX_TYPES,
-};
-
-class CRandomPlacementPopulator : public IPopulator
-{
-public:
-	static CRandomPlacementPopulator *create(CPopulationManager *pManager)
-	{
-		CRandomPlacementPopulator *bytes = (CRandomPlacementPopulator *)calloc(1, sizeof(CRandomPlacementPopulator));
-		call_mfunc<void, CRandomPlacementPopulator, CPopulationManager *>(bytes, CRandomPlacementPopulatorCTOR, pManager);
-		return bytes;
-	}
-
-	int m_count;
-	float m_minSeparation;
-	unsigned int m_navAreaFilter;
-};
-
-class CPeriodicSpawnPopulator : public IPopulator
-{
-public:
-	static CPeriodicSpawnPopulator *create(CPopulationManager *pManager)
-	{
-		CPeriodicSpawnPopulator *bytes = (CPeriodicSpawnPopulator *)calloc(1, sizeof(CPeriodicSpawnPopulator));
-		call_mfunc<void, CPeriodicSpawnPopulator, CPopulationManager *>(bytes, CPeriodicSpawnPopulatorCTOR, pManager);
-		return bytes;
-	}
-
-	CSpawnLocation m_where;
-	float m_minInterval;
-	float m_maxInterval;
-
-	CountdownTimer m_timer;
-};
-
 IForward *pop_parse{nullptr};
 
 void CPopulationManager::AddPopulator(IPopulator *populator)
 {
 	CPopulationManager_members_t &members{GetMembers()};
 
-	members.m_populatorVector.AddToTail( populator );
+	populator_type_t type = get_populator_type(populator);
+	switch(type) {
+		case populator_wave: {
+			CWave *wave{(CWave *)populator};
 
-	CMissionPopulator *pMission = ((get_populator_type(populator) == populator_mission) ? (CMissionPopulator *)populator : nullptr);
+			wave->getvars().index = members.m_waveVector.Count();
 
-	if ( pMission )
-	{
-		// FIXME: Need a way to handle missions that spawn multiple types
-		int nStartWave = pMission->BeginAtWave();
-		int nStopWave = pMission->StopAtWave();
+			members.m_waveVector.AddToTail( wave );
+		} break;
+		case populator_mission: {
+			CMissionPopulator *pMission{(CMissionPopulator *)populator};
 
-		if ( pMission->m_spawner && !pMission->m_spawner->IsVarious() )
-		{
-			for ( int i = nStartWave; i < nStopWave; ++i )
+			// FIXME: Need a way to handle missions that spawn multiple types
+			int nStartWave = pMission->BeginAtWave();
+			int nStopWave = pMission->StopAtWave();
+
+			if ( pMission->m_spawner && !pMission->m_spawner->IsVarious() )
 			{
-				if ( members.m_waveVector.IsValidIndex( i ) )
+				for ( int i = nStartWave; i < nStopWave; ++i )
 				{
-					CWave *pWave = members.m_waveVector[ i ];
-				
-					unsigned int iFlags = MVM_CLASS_FLAG_MISSION;
-					if ( pMission->m_spawner->IsMiniBoss() )
+					if ( members.m_waveVector.IsValidIndex( i ) )
 					{
-						iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+						CWave *pWave = members.m_waveVector[ i ];
+					
+						unsigned int iFlags = MVM_CLASS_FLAG_MISSION;
+						if ( pMission->m_spawner->IsMiniBoss() )
+						{
+							iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+						}
+						if ( pMission->m_spawner->HasAttribute( ALWAYS_CRIT ) )
+						{
+							iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
+						}
+						pWave->AddClassType( pMission->m_spawner->GetClassIcon(), 0, iFlags );
 					}
-					if ( pMission->m_spawner->HasAttribute( ALWAYS_CRIT ) )
-					{
-						iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
-					}
-					pWave->AddClassType( pMission->m_spawner->GetClassIcon(), 0, iFlags );
 				}
 			}
-		}
+
+			members.m_populatorVector.AddToTail( pMission );
+		} break;
+		default: {
+			members.m_populatorVector.AddToTail( populator );
+		} break;
 	}
 }
 
