@@ -149,6 +149,16 @@
 				"library" "server"
 				"linux" "@_Z20DoTeleporterOverrideP11CBaseEntityR6Vectorb"
 			}
+			"CPopulationManager::SetPopulationFilename"
+			{
+				"library" "server"
+				"linux" "@_ZN18CPopulationManager21SetPopulationFilenameEPKc"
+			}
+			"CPopulationManager::Initialize"
+			{
+				"library" "server"
+				"linux" "@_ZN18CPopulationManager10InitializeEv"
+			}
 		}
 	}
 }

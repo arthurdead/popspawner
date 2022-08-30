@@ -967,6 +967,9 @@ ConVar *tf_populator_damage_multiplier{nullptr};
 ConVar *tf_mvm_endless_damage_boost_rate{nullptr};
 ConVar *tf_mvm_endless_scale_rate{nullptr};
 
+void *CPopulationManagerSetPopulationFilename{nullptr};
+void *CPopulationManagerInitialize{nullptr};
+
 class CPopulationManager : public CBaseEntity
 {
 public:
@@ -976,6 +979,8 @@ public:
 	}
 
 	bool DetourParse( void );
+
+	bool ParseAdditive( const char *populationFile );
 
 	KeyValues *GetTemplate( const char *pszName )
 	{
@@ -1044,6 +1049,16 @@ public:
 		}
 		
 		return NULL;
+	}
+
+	void SetPopulationFilename( const char *populationFile )
+	{
+		call_mfunc<void, CPopulationManager, const char *>(this, CPopulationManagerSetPopulationFilename, populationFile);
+	}
+
+	bool Initialize( void )
+	{
+		return call_mfunc<bool, CPopulationManager>(this, CPopulationManagerInitialize);
 	}
 };
 
@@ -1239,35 +1254,34 @@ bool CSpawnLocation::DetourParse( KeyValues *data )
 
 		return true;
 	}
-	else if ( FStrEq( name, "PluginSpawnLocation" ) )
-	{
-		if(spawnlocation_parse->GetFunctionCount() > 0) {
-			HandleError err{};
-			Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
-			if(err != HandleError_None) {
-				smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
-				return false;
-			}
 
-			spawnlocation_parse->PushCell((cell_t)last_populator);
-			spawnlocation_parse->PushCell((cell_t)this);
-			spawnlocation_parse->PushCell(hndl);
-			cell_t result = 0;
-			spawnlocation_parse->PushCellByRef(&result);
-			cell_t res = 0;
-			spawnlocation_parse->Execute(&res);
-
-			handlesys->FreeHandle(hndl, nullptr);
-
-			if(res == Pl_Changed) {
-				if(!result) {
-					return false;
-				}
-			} else if(res >= Pl_Handled) {
-				return false;
-			}
+	if(spawnlocation_parse->GetFunctionCount() > 0) {
+		HandleError err{};
+		Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
+		if(err != HandleError_None) {
+			smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+			return false;
 		}
 
+		spawnlocation_parse->PushCell((cell_t)last_populator);
+		spawnlocation_parse->PushCell((cell_t)this);
+		spawnlocation_parse->PushCell(hndl);
+		cell_t result = 0;
+		spawnlocation_parse->PushCellByRef(&result);
+		cell_t res = 0;
+		spawnlocation_parse->Execute(&res);
+
+		handlesys->FreeHandle(hndl, nullptr);
+
+		if(res == Pl_Changed) {
+			return result;
+		} else if(res >= Pl_Handled) {
+			return false;
+		}
+	}
+
+	if ( FStrEq( name, "PluginSpawnLocation" ) )
+	{
 		return true;
 	}
 
@@ -1482,6 +1496,8 @@ public:
 	}
 
 	bool DetourParse( KeyValues *data );
+
+	bool ParseAdditive( KeyValues *data );
 
 	void AddClassType( string_t iszClassIconName, int nCount, unsigned int iFlags )
 	{
@@ -2007,6 +2023,7 @@ pop_entry_t::~pop_entry_t()
 class CTakeDamageInfo;
 
 SH_DECL_HOOK2(IPopulationSpawner, Spawn, SH_NOATTRIB, 0, bool, const Vector &, EntityHandleVector_t *);
+SH_DECL_HOOK1(IPopulationSpawner, Parse, SH_NOATTRIB, 0, bool, KeyValues *);
 SH_DECL_MANUALHOOK1_void(Event_Killed, 0, 0, 0, const CTakeDamageInfo &)
 
 static int objective_resource_ref = INVALID_EHANDLE_INDEX;
@@ -2505,11 +2522,50 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 	RETURN_META_VALUE(MRES_HANDLED, false);
 }
 
+IForward *spawner_parse{nullptr};
+
+static bool hook_spawner_parse(KeyValues *data)
+{
+	IPopulationSpawner *spawner = META_IFACEPTR(IPopulationSpawner);
+
+	IPopulator *populator = spawner->GetPopulator();
+
+	if(spawner_parse->GetFunctionCount() > 0) {
+		HandleError err{};
+		Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
+		if(err != HandleError_None) {
+			smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+			return false;
+		}
+
+		spawner_parse->PushCell((cell_t)populator);
+		spawner_parse->PushCell((cell_t)spawner);
+		spawner_parse->PushCell(hndl);
+		cell_t result = 0;
+		spawner_parse->PushCellByRef(&result);
+		cell_t res = 0;
+		spawner_parse->Execute(&res);
+
+		handlesys->FreeHandle(hndl, nullptr);
+
+		if(res == Pl_Changed) {
+			if(!result) {
+				RETURN_META_VALUE(MRES_SUPERCEDE, false);
+			}
+		} else if(res >= Pl_Handled) {
+			RETURN_META_VALUE(MRES_SUPERCEDE, false);
+		}
+	}
+
+	RETURN_META_VALUE(MRES_HANDLED, true);
+}
+
 static void hook_spawner_dtor()
 {
 	IPopulationSpawner *spawner = META_IFACEPTR(IPopulationSpawner);
 
 	SH_REMOVE_HOOK(IPopulationSpawner, Spawn, spawner, SH_STATIC(hook_spawner_spawn), true);
+	SH_REMOVE_HOOK(IPopulationSpawner, Parse, spawner, SH_STATIC(hook_spawner_parse), true);
 	SH_REMOVE_MANUALHOOK(GenericDtor, spawner, SH_STATIC(hook_spawner_dtor), false);
 
 	RETURN_META(MRES_HANDLED);
@@ -2544,6 +2600,7 @@ DETOUR_DECL_STATIC2(ParseSpawner, IPopulationSpawner *, IPopulator *, populator,
 	if(spawner) {
 		SH_ADD_MANUALHOOK(GenericDtor, spawner, SH_STATIC(hook_spawner_dtor), false);
 		SH_ADD_HOOK(IPopulationSpawner, Spawn, spawner, SH_STATIC(hook_spawner_spawn), true);
+		SH_ADD_HOOK(IPopulationSpawner, Parse, spawner, SH_STATIC(hook_spawner_parse), true);
 	}
 
 	return spawner;
@@ -3032,11 +3089,44 @@ cell_t IPopulatorHasEventChangeAttributes(IPluginContext *pContext, const cell_t
 	return obj->HasEventChangeAttributes(pszEventName);
 }
 
+cell_t IPopulatorParse(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulator *obj{(IPopulator *)params[1]};
+
+	HandleError err{};
+	KeyValues *pKv = smutils->ReadKeyValuesHandle(params[2], &err);
+	if(err != HandleError_None) {
+		return pContext->ThrowNativeError("Invalid KeyValues handle %x (error %d).", params[2], err);
+	}
+
+	return obj->Parse(pKv);
+}
+
+cell_t CWaveParseAdditive(IPluginContext *pContext, const cell_t *params)
+{
+	CWave *obj{(CWave *)params[1]};
+
+	HandleError err{};
+	KeyValues *pKv = smutils->ReadKeyValuesHandle(params[2], &err);
+	if(err != HandleError_None) {
+		return pContext->ThrowNativeError("Invalid KeyValues handle %x (error %d).", params[2], err);
+	}
+
+	return obj->ParseAdditive(pKv);
+}
+
 cell_t IPopulatorSpawnerget(IPluginContext *pContext, const cell_t *params)
 {
 	IPopulator *obj{(IPopulator *)params[1]};
 
 	return (cell_t)obj->m_spawner;
+}
+
+cell_t IPopulatorTypeget(IPluginContext *pContext, const cell_t *params)
+{
+	IPopulator *obj{(IPopulator *)params[1]};
+
+	return (cell_t)get_populator_type(obj);
 }
 
 cell_t CWaveSpawnPopulatorTotalCountset(IPluginContext *pContext, const cell_t *params)
@@ -3245,6 +3335,44 @@ cell_t SpawnLocationRelativeset(IPluginContext *pContext, const cell_t *params)
 	return 0;
 }
 
+cell_t set_pop_filename(IPluginContext *pContext, const cell_t *params)
+{
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(PopulationManager) {
+		return 0;
+	}
+
+	char *populationFile{nullptr};
+	pContext->LocalToString(params[1], &populationFile);
+
+	PopulationManager->SetPopulationFilename(populationFile);
+
+	return 1;
+}
+
+cell_t init_pop(IPluginContext *pContext, const cell_t *params)
+{
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(PopulationManager) {
+		return 0;
+	}
+
+	return PopulationManager->Initialize();
+}
+
+cell_t merge_pop(IPluginContext *pContext, const cell_t *params)
+{
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(PopulationManager) {
+		return 0;
+	}
+
+	char *populationFile{nullptr};
+	pContext->LocalToString(params[1], &populationFile);
+
+	return PopulationManager->ParseAdditive(populationFile);
+}
+
 sp_nativeinfo_t natives[] =
 {
 	{"CustomPopulationSpawner.set_data", set_data},
@@ -3280,7 +3408,9 @@ sp_nativeinfo_t natives[] =
 	{"IPopulationSpawner.Populator.get", IPopulationSpawnerPopulatorget},
 	{"IPopulationSpawner.Delete", IPopulationSpawnerDelete},
 	{"IPopulator.HasEventChangeAttributes", IPopulatorHasEventChangeAttributes},
+	{"IPopulator.Parse", IPopulatorParse},
 	{"IPopulator.Spawner.get", IPopulatorSpawnerget},
+	{"IPopulator.Type.get", IPopulatorTypeget},
 	{"CWaveSpawnPopulator.TotalCount.set", CWaveSpawnPopulatorTotalCountset},
 	{"CWaveSpawnPopulator.TotalCount.get", CWaveSpawnPopulatorTotalCountget},
 	{"CWaveSpawnPopulator.MaxActive.set", CWaveSpawnPopulatorMaxActiveset},
@@ -3300,6 +3430,7 @@ sp_nativeinfo_t natives[] =
 	{"CWave.WaitWhenDone.set", CWaveWaitWhenDoneset},
 	{"CWave.WaitWhenDone.get", CWaveWaitWhenDoneget},
 	{"CWave.Index.get", CWaveIndexget},
+	{"CWave.ParseAdditive", CWaveParseAdditive},
 	{"pop_health_multiplier", pop_health_multiplier},
 	{"pop_damage_multiplier", pop_damage_multiplier},
 	{"current_wave", current_wave},
@@ -3308,6 +3439,9 @@ sp_nativeinfo_t natives[] =
 	{"SpawnLocation.Relative.set", SpawnLocationRelativeset},
 	{"SpawnLocation.ClosestPointOnNav.get", SpawnLocationClosestPointOnNavget},
 	{"SpawnLocation.ClosestPointOnNav.set", SpawnLocationClosestPointOnNavset},
+	{"set_pop_filename", set_pop_filename},
+	{"init_pop", init_pop},
+	{"merge_pop", merge_pop},
 	{NULL, NULL}
 };
 
@@ -3616,31 +3750,7 @@ bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
 		}
 		else if ( !Q_stricmp( name, "Plugin" ) )
 		{
-			if(wavespawn_parse->GetFunctionCount() > 0) {
-				HandleError err{};
-				Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
-				if(err != HandleError_None) {
-					smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
-					return false;
-				}
-
-				wavespawn_parse->PushCell((cell_t)this);
-				wavespawn_parse->PushCell(hndl);
-				cell_t result = 0;
-				wavespawn_parse->PushCellByRef(&result);
-				cell_t res = 0;
-				wavespawn_parse->Execute(&res);
-
-				handlesys->FreeHandle(hndl, nullptr);
-
-				if(res == Pl_Changed) {
-					if(!result) {
-						return false;
-					}
-				} else if(res >= Pl_Handled) {
-					return false;
-				}
-			}
+			continue;
 		}
 		else
 		{
@@ -3657,6 +3767,32 @@ bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
 		m_remainingCount = m_totalCount;
 	}
 
+	if(wavespawn_parse->GetFunctionCount() > 0) {
+		HandleError err{};
+		Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(values, nullptr, &err);
+		if(err != HandleError_None) {
+			smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+			return false;
+		}
+
+		wavespawn_parse->PushCell((cell_t)this);
+		wavespawn_parse->PushCell(hndl);
+		cell_t result = 0;
+		wavespawn_parse->PushCellByRef(&result);
+		cell_t res = 0;
+		wavespawn_parse->Execute(&res);
+
+		handlesys->FreeHandle(hndl, nullptr);
+
+		if(res == Pl_Changed) {
+			if(!result) {
+				return false;
+			}
+		} else if(res >= Pl_Handled) {
+			return false;
+		}
+	}
+
 	return true;
 }
 
@@ -3667,12 +3803,8 @@ DETOUR_DECL_MEMBER1(WaveSpawnPopulatorParse, bool, KeyValues *, values)
 
 IForward *wave_parse{nullptr};
 
-bool CWave::DetourParse( KeyValues *data )
+bool CWave::ParseAdditive( KeyValues *data )
 {
-	m_iEnemyCount = 0;
-	m_nWaveClassCounts.RemoveAll();
-	m_totalCurrency = 0;
-
 	FOR_EACH_SUBKEY( data, kvWave )
 	{
 		if ( !Q_stricmp( kvWave->GetName(), "WaveSpawn" ) )
@@ -3773,31 +3905,7 @@ bool CWave::DetourParse( KeyValues *data )
 		}
 		else if ( !Q_stricmp( kvWave->GetName(), "Plugin" ) )
 		{
-			if(wave_parse->GetFunctionCount() > 0) {
-				HandleError err{};
-				Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
-				if(err != HandleError_None) {
-					smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
-					return false;
-				}
-
-				wave_parse->PushCell((cell_t)this);
-				wave_parse->PushCell(hndl);
-				cell_t result = 0;
-				wave_parse->PushCellByRef(&result);
-				cell_t res = 0;
-				wave_parse->Execute(&res);
-
-				handlesys->FreeHandle(hndl, nullptr);
-
-				if(res == Pl_Changed) {
-					if(!result) {
-						return false;
-					}
-				} else if(res >= Pl_Handled) {
-					return false;
-				}
-			}
+			continue;
 		}
 		else
 		{
@@ -3805,7 +3913,42 @@ bool CWave::DetourParse( KeyValues *data )
 		}
 	}
 
+	if(wave_parse->GetFunctionCount() > 0) {
+		HandleError err{};
+		Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
+		if(err != HandleError_None) {
+			smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+			return false;
+		}
+
+		wave_parse->PushCell((cell_t)this);
+		wave_parse->PushCell(hndl);
+		cell_t result = 0;
+		wave_parse->PushCellByRef(&result);
+		cell_t res = 0;
+		wave_parse->Execute(&res);
+
+		handlesys->FreeHandle(hndl, nullptr);
+
+		if(res == Pl_Changed) {
+			if(!result) {
+				return false;
+			}
+		} else if(res >= Pl_Handled) {
+			return false;
+		}
+	}
+
 	return true;
+}
+
+bool CWave::DetourParse( KeyValues *data )
+{
+	m_iEnemyCount = 0;
+	m_nWaveClassCounts.RemoveAll();
+	m_totalCurrency = 0;
+
+	return ParseAdditive(data);
 }
 
 enum 
@@ -3850,36 +3993,16 @@ public:
 
 IForward *pop_parse{nullptr};
 
-bool CPopulationManager::DetourParse( void )
+bool CPopulationManager::ParseAdditive( const char *populationFile )
 {
 	CPopulationManager_members_t &members{GetMembers()};
 
-	if ( members.m_popfileFull[ 0 ] == '\0' )
-	{
-		Warning( "No population file specified.\n" );
-		return false;
-	}
-
-	//if ( m_bIsInitialized )
-//		return true;
-
 	KeyValues *values = new KeyValues( "Population" );
-	if ( !values->LoadFromFile( filesystem, members.m_popfileFull, "POPULATION" ) )
+	if ( !values->LoadFromFile( filesystem, populationFile, "POPULATION" ) )
 	{
-		Warning( "Can't open %s.\n", members.m_popfileFull );
+		Warning( "Can't open %s.\n", populationFile );
 		values->deleteThis();
 		return false;
-	}
-
-	// Clear out existing Data structures
-	members.m_populatorVector.PurgeAndDeleteElements();
-	members.m_waveVector.RemoveAll();
-	members.m_bEndlessOn = false;
-
-	if ( members.m_pTemplates )
-	{
-		members.m_pTemplates->deleteThis();
-		members.m_pTemplates = NULL;
 	}
 
 	// find templates first
@@ -3887,8 +4010,14 @@ bool CPopulationManager::DetourParse( void )
 
 	if ( pTemplates )
 	{
-		members.m_pTemplates = pTemplates->MakeCopy();
+		if(!members.m_pTemplates) {
+			members.m_pTemplates = pTemplates->MakeCopy();
+		} else {
+			members.m_pTemplates->RecursiveMergeKeyValues(pTemplates);
+		}
 	}
+
+	CUtlVector< IPopulator * > temp_populators;
 
 	for ( KeyValues *data = values->GetFirstSubKey(); data != NULL; data = data->GetNextKey() )
 	{
@@ -3958,6 +4087,7 @@ bool CPopulationManager::DetourParse( void )
 			last_populator = nullptr;
 
 			members.m_populatorVector.AddToTail( randomPopulator );
+			temp_populators.AddToTail( randomPopulator );
 		}
 		else if ( !Q_stricmp( name, "PeriodicSpawn" ) )
 		{
@@ -3976,6 +4106,7 @@ bool CPopulationManager::DetourParse( void )
 			last_populator = nullptr;
 
 			members.m_populatorVector.AddToTail( periodicPopulator );
+			temp_populators.AddToTail( periodicPopulator );
 		}
 		else if ( !Q_stricmp( name, "Wave" ) )
 		{
@@ -3997,6 +4128,7 @@ bool CPopulationManager::DetourParse( void )
 
 			// also keep vector of wave pointers for convenience
 			members.m_waveVector.AddToTail( wave );
+			temp_populators.AddToTail( wave );
 		}
 		else if ( !Q_stricmp( name, "Mission" ) )
 		{
@@ -4015,6 +4147,7 @@ bool CPopulationManager::DetourParse( void )
 			last_populator = nullptr;
 
 			members.m_populatorVector.AddToTail( missionPopulator );
+			temp_populators.AddToTail( missionPopulator );
 		}
 		else if ( !Q_stricmp( name, "Templates" ) )
 		{
@@ -4030,30 +4163,7 @@ bool CPopulationManager::DetourParse( void )
 		}
 		else if ( !Q_stricmp( name, "Plugin" ) )
 		{
-			if(pop_parse->GetFunctionCount() > 0) {
-				HandleError err{};
-				Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(data, nullptr, &err);
-				if(err != HandleError_None) {
-					smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
-					return false;
-				}
-
-				pop_parse->PushCell(hndl);
-				cell_t result = 0;
-				pop_parse->PushCellByRef(&result);
-				cell_t res = 0;
-				pop_parse->Execute(&res);
-
-				handlesys->FreeHandle(hndl, nullptr);
-
-				if(res == Pl_Changed) {
-					if(!result) {
-						return false;
-					}
-				} else if(res >= Pl_Handled) {
-					return false;
-				}
-			}
+			continue;
 		}
 		else
 		{
@@ -4062,9 +4172,34 @@ bool CPopulationManager::DetourParse( void )
 		}
 	}
 
-	for ( int nPopulator = 0; nPopulator < members.m_populatorVector.Count(); ++nPopulator )
+	if(pop_parse->GetFunctionCount() > 0) {
+		HandleError err{};
+		Handle_t hndl = ((HandleSystemHack *)handlesys)->CreateKeyValuesHandle(values, nullptr, &err);
+		if(err != HandleError_None) {
+			smutils->LogError(myself, "Invalid KeyValues handle %x (error %d).", hndl, err);
+			return false;
+		}
+
+		pop_parse->PushCell(hndl);
+		cell_t result = 0;
+		pop_parse->PushCellByRef(&result);
+		cell_t res = 0;
+		pop_parse->Execute(&res);
+
+		handlesys->FreeHandle(hndl, nullptr);
+
+		if(res == Pl_Changed) {
+			if(!result) {
+				return false;
+			}
+		} else if(res >= Pl_Handled) {
+			return false;
+		}
+	}
+
+	for ( int nPopulator = 0; nPopulator < temp_populators.Count(); ++nPopulator )
 	{
-		IPopulator *populator{members.m_populatorVector[ nPopulator ]};
+		IPopulator *populator{temp_populators[ nPopulator ]};
 
 		CMissionPopulator *pMission = ((get_populator_type(populator) == populator_mission) ? (CMissionPopulator *)populator : nullptr);
 
@@ -4101,6 +4236,33 @@ bool CPopulationManager::DetourParse( void )
 	values->deleteThis();
 
 	return true;
+}
+
+bool CPopulationManager::DetourParse( void )
+{
+	CPopulationManager_members_t &members{GetMembers()};
+
+	if ( members.m_popfileFull[ 0 ] == '\0' )
+	{
+		Warning( "No population file specified.\n" );
+		return false;
+	}
+
+	//if ( m_bIsInitialized )
+//		return true;
+
+	// Clear out existing Data structures
+	members.m_populatorVector.PurgeAndDeleteElements();
+	members.m_waveVector.RemoveAll();
+	members.m_bEndlessOn = false;
+
+	if ( members.m_pTemplates )
+	{
+		members.m_pTemplates->deleteThis();
+		members.m_pTemplates = NULL;
+	}
+
+	return ParseAdditive(members.m_popfileFull);
 }
 
 DETOUR_DECL_MEMBER1(WaveParse, bool, KeyValues *, values)
@@ -4282,6 +4444,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetMemSig("CMissionPopulator::CMissionPopulator", &CMissionPopulatorCTOR);
 	g_pGameConf->GetMemSig("CWave::CWave", &CWaveCTOR);
 
+	g_pGameConf->GetMemSig("CPopulationManager::SetPopulationFilename", &CPopulationManagerSetPopulationFilename);
+	g_pGameConf->GetMemSig("CPopulationManager::Initialize", &CPopulationManagerInitialize);
+
 	g_pGameConf->GetMemSig("ParseEvent", &ParseEventPtr);
 
 	g_pGameConf->GetMemSig("CTFPowerup::DropSingleInstance", &CTFPowerupDropSingleInstance);
@@ -4309,6 +4474,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	wavespawn_parse = forwards->CreateForward("wavespawn_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
 	wave_parse = forwards->CreateForward("wave_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
 	spawnlocation_parse = forwards->CreateForward("spawnlocation_parse", ET_Hook, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_CellByRef);
+	spawner_parse = forwards->CreateForward("spawner_parse", ET_Hook, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_CellByRef);
 	pop_event_fired = forwards->CreateForward("pop_event_fired", ET_Ignore, 1, nullptr, Param_String);
 	is_bonus_wave = forwards->CreateForward("is_bonus_wave", ET_Hook, 3, nullptr, Param_CellByRef, Param_CellByRef, Param_Array);
 	pop_entity_spawned = forwards->CreateForward("pop_entity_spawned", ET_Ignore, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_Cell);
@@ -4340,5 +4506,6 @@ void Sample::SDK_OnUnload()
 	forwards->ReleaseForward(pop_event_fired);
 	forwards->ReleaseForward(is_bonus_wave);
 	forwards->ReleaseForward(pop_entity_spawned);
+	forwards->ReleaseForward(spawner_parse);
 	handlesys->RemoveType(popspawner_handle, myself->GetIdentity());
 }

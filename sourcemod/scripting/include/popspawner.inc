@@ -50,11 +50,26 @@ typedef miniboss_func_t = function bool (CustomPopulationSpawner spawner, int nu
 typedef attr_func_t = function bool (CustomPopulationSpawner spawner, AttributeType attr, int num);
 typedef del_func_t = function void (CustomPopulationSpawner spawner);
 
+enum populator_type_t
+{
+	populator_none,
+	populator_unknown,
+	populator_wavespawn,
+	populator_mission,
+};
+
 methodmap IPopulator
 {
+	public native bool Parse(KeyValues data);
+
 	public native bool HasEventChangeAttributes(const char[] pszEventName);
 
 	property IPopulationSpawner Spawner
+	{
+		public native get();
+	}
+
+	property populator_type_t Type
 	{
 		public native get();
 	}
@@ -257,6 +272,8 @@ methodmap CWaveSpawnPopulator < IPopulator
 
 methodmap CWave < IPopulator
 {
+	public native bool ParseAdditive(KeyValues data);
+
 	property float WaitWhenDone
 	{
 		public native get();
@@ -277,9 +294,14 @@ native float pop_damage_multiplier();
 native CWave current_wave();
 native int current_wave_index();
 
+native bool init_pop();
+native bool set_pop_filename(const char[] path);
+native bool merge_pop(const char[] path);
+
 forward Action pop_parse(KeyValues data, bool &result);
 forward Action wavespawn_parse(CWaveSpawnPopulator populator, KeyValues data, bool &result);
 forward Action wave_parse(CWave populator, KeyValues data, bool &result);
+forward Action spawner_parse(IPopulator populator, IPopulationSpawner spawner, KeyValues data, bool &result);
 forward Action spawnlocation_parse(IPopulator populator, SpawnLocation location, KeyValues data, bool &result);
 
 forward Action is_bonus_wave(bool &result, int &boss, float pos[3]);
