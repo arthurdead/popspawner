@@ -139,6 +139,16 @@
 				"library" "server"
 				"linux" "@_ZN20ITFTeamSpawnAutoList30m_ITFTeamSpawnAutoListAutoListE"
 			}
+			"CSpawnLocation::SelectSpawnArea"
+			{
+				"library" "server"
+				"linux" "@_ZNK14CSpawnLocation15SelectSpawnAreaEv"
+			}
+			"DoTeleporterOverride"
+			{
+				"library" "server"
+				"linux" "@_Z20DoTeleporterOverrideP11CBaseEntityR6Vectorb"
+			}
 		}
 	}
 }

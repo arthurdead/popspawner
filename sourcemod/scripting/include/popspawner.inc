@@ -177,9 +177,27 @@ native IPopulationSpawner create_spawner(const char[] name, IPopulator populator
 
 native bool IsSpaceToSpawnHere(const float pos[3]);
 
+enum RelativePositionType
+{
+	UNDEFINED = 0,
+	AHEAD,
+	BEHIND,
+	ANYWHERE
+};
+
 methodmap SpawnLocation
 {
+	property RelativePositionType Relative
+	{
+		public native get();
+		public native set(RelativePositionType value);
+	}
 
+	property bool ClosestPointOnNav
+	{
+		public native get();
+		public native set(bool value);
+	}
 };
 
 forward Action find_spawn_location(IPopulator populator, SpawnLocation location, float pos[3]);

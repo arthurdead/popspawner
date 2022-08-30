@@ -40,6 +40,19 @@
 #define FMTFUNCTION(...)
 #endif
 
+#define TF_DLL
+#define USES_ECON_ITEMS
+
+#define BASEENTITY_H
+#define NEXT_BOT
+#define GLOWS_ENABLE
+#define USE_NAV_MESH
+#define RAD_TELEMETRY_DISABLED
+
+#define protected public
+#include <tier1/utlvector.h>
+#undef protected
+
 #include "extension.h"
 
 #include <CDetour/detours.h>
@@ -52,8 +65,9 @@ using EHANDLE = CHandle<CBaseEntity>;
 typedef wchar_t locchar_t;
 #include <tier1/utlmap.h>
 #include <vstdlib/random.h>
-#include <shareddefs.h>
+#define TRACER_DONT_USE_ATTACHMENT -1
 #include <util.h>
+#include <shareddefs.h>
 #include <ServerNetworkProperty.h>
 #define DECLARE_PREDICTABLE()
 #include <collisionproperty.h>
@@ -431,6 +445,7 @@ int m_iNameOffset = -1;
 void *CBaseEntitySetAbsOrigin = nullptr;
 void *CBaseEntityCalcAbsolutePosition = nullptr;
 int m_vecAbsOriginOffset = -1;
+int m_iClassnameOffset = -1;
 
 class CBasePlayer;
 
@@ -462,6 +477,18 @@ public:
 		}
 
 		return *(unsigned char *)(((unsigned char *)this) + m_iParentAttachmentOffset);
+	}
+
+	const char* GetClassname()
+	{
+		if(m_iClassnameOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iClassname", &info);
+			m_iClassnameOffset = info.actual_offset;
+		}
+
+		return STRING( *(string_t *)((unsigned char *)this + m_iClassnameOffset) );
 	}
 
 	void DispatchUpdateTransmitState()
@@ -780,6 +807,36 @@ public:
 		return *(string_t *)((unsigned char *)this + m_iNameOffset);
 	}
 
+	bool ClassMatches( const char *pszClassOrWildcard )
+	{
+		if(m_iClassnameOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iClassname", &info);
+			m_iClassnameOffset = info.actual_offset;
+		}
+
+		if ( IDENT_STRINGS( *(string_t *)((unsigned char *)this + m_iClassnameOffset), pszClassOrWildcard ) )
+			return true;
+
+		return false;
+	}
+
+	bool ClassMatches( string_t nameStr )
+	{
+		if(m_iClassnameOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_iClassname", &info);
+			m_iClassnameOffset = info.actual_offset;
+		}
+
+		if ( IDENT_STRINGS( *(string_t *)((unsigned char *)this + m_iClassnameOffset), nameStr ) )
+			return true;
+
+		return false;
+	}
+
 	static CBaseEntity *CreateNoSpawn( const char *szName, const Vector &vecOrigin, const QAngle &vecAngles, CBaseEntity *pOwner = NULL )
 	{
 		CBaseEntity *pEntity{CreateEntityByName(szName)};
@@ -792,7 +849,22 @@ public:
 
 		return pEntity;
 	}
+
+	//GARBAGE
+	int GetHealth() { return 0; }
+	int m_takedamage;
+	void	NetworkStateChanged() { }
+	void	NetworkStateChanged( void *pVar ) {  }
+	virtual bool ShouldBlockNav() const { return true; }
+	int ObjectCaps() { return 0; }
+	bool HasSpawnFlags(int) { return 0; }
+	int GetTeamNumber() { return 0; }
 };
+
+inline bool FClassnameIs(CBaseEntity *pEntity, const char *szClassname)
+{ 
+	return pEntity->ClassMatches(szClassname);
+}
 
 class CBaseCombatCharacter : public CBaseEntity
 {
@@ -1038,6 +1110,29 @@ enum RelativePositionType
 
 void *CSpawnLocationParsePtr = nullptr;
 
+void *CSpawnLocationSelectSpawnArea{nullptr};
+
+class CBaseToggle : public CBaseEntity
+{
+};
+
+#define FCAP_USE_IN_RADIUS 0
+#define FCAP_IMPULSE_USE 0
+#define DOORS_H
+
+#include <nav_area.h>
+
+class CTFNavArea : public CNavArea
+{
+};
+
+enum SpawnLocationResult
+{
+	SPAWN_LOCATION_NOT_FOUND = 0,
+	SPAWN_LOCATION_NAV,
+	SPAWN_LOCATION_TELEPORTER
+};
+
 class CSpawnLocation
 {
 public:
@@ -1048,6 +1143,13 @@ public:
 
 	bool DetourParse( KeyValues *data );
 
+	SpawnLocationResult DetourFindSpawnLocation( Vector& vSpawnPosition );
+
+	CTFNavArea *SelectSpawnArea( void )
+	{
+		return call_mfunc<CTFNavArea *, CSpawnLocation>(this, CSpawnLocationSelectSpawnArea);
+	}
+
 	RelativePositionType m_relative;
 	TFTeamSpawnVector_t m_teamSpawnVector;
 
@@ -1056,10 +1158,22 @@ public:
 	bool m_bClosestPointOnNav;
 };
 
+int m_bDisabledOffset = -1;
+
 class CTFTeamSpawn : public CBaseEntity
 {
 public:
-	
+	bool IsDisabled()
+	{
+		if(m_bDisabledOffset == -1) {
+			sm_datatable_info_t info{};
+			datamap_t *pMap = gamehelpers->GetDataMap(this);
+			gamehelpers->FindDataMapInfo(pMap, "m_bDisabled", &info);
+			m_bDisabledOffset = info.actual_offset;
+		}
+
+		return *(bool *)(((unsigned char *)this) + m_bDisabledOffset);
+	}
 };
 
 static CUtlVector<CTFTeamSpawn *> *m_ITFTeamSpawnAutoListAutoList{nullptr};
@@ -1069,6 +1183,11 @@ IForward *spawnlocation_parse{nullptr};
 static IPopulator *last_populator{nullptr};
 
 #include "icandowhateveriwantthefactthattheresnowaytodothisstillisridiculous.h"
+
+CBaseEntity *FindEntityByClassname(CBaseEntity *pStart, const char *classname)
+{
+	return servertools->FindEntityByClassname(pStart, classname);
+}
 
 bool CSpawnLocation::DetourParse( KeyValues *data )
 {
@@ -1129,13 +1248,14 @@ bool CSpawnLocation::DetourParse( KeyValues *data )
 
 			// collect entities with given name
 			bool bFound = false;
-			for ( int i=0; i<m_ITFTeamSpawnAutoListAutoList->Count(); ++i )
+			CBaseEntity *spawnPoint = NULL;
+			while( ( spawnPoint = FindEntityByClassname( spawnPoint, "*" ) ) != NULL )
 			{
-				CTFTeamSpawn* pTeamSpawn = static_cast< CTFTeamSpawn* >( (*m_ITFTeamSpawnAutoListAutoList)[i] );
-				if ( FStrEq( STRING( pTeamSpawn->GetEntityName() ), value ) )
+				if ( FStrEq( STRING( spawnPoint->GetEntityName() ), value ) )
 				{
-					m_teamSpawnVector.AddToTail( pTeamSpawn );
+					m_teamSpawnVector.AddToTail( (CTFTeamSpawn *)spawnPoint );
 					bFound = true;
+					break;
 				}
 			}
 
@@ -1156,13 +1276,6 @@ DETOUR_DECL_MEMBER1(SpawnLocationParse, bool, KeyValues *, values)
 {
 	return ((CSpawnLocation *)this)->CSpawnLocation::DetourParse(values);
 }
-
-enum SpawnLocationResult
-{
-	SPAWN_LOCATION_NOT_FOUND = 0,
-	SPAWN_LOCATION_NAV,
-	SPAWN_LOCATION_TELEPORTER
-};
 
 #define MVM_CLASS_FLAG_NONE				0
 #define MVM_CLASS_FLAG_NORMAL			(1<<0)
@@ -1895,11 +2008,6 @@ SH_DECL_HOOK2(IPopulationSpawner, Spawn, SH_NOATTRIB, 0, bool, const Vector &, E
 SH_DECL_MANUALHOOK1_void(Event_Killed, 0, 0, 0, const CTakeDamageInfo &)
 
 static int objective_resource_ref = INVALID_EHANDLE_INDEX;
-
-CBaseEntity *FindEntityByClassname(CBaseEntity *pStart, const char *classname)
-{
-	return servertools->FindEntityByClassname(pStart, classname);
-}
 
 void Sample::OnCoreMapStart(edict_t *pEdictList, int edictCount, int clientMax)
 {
@@ -3104,6 +3212,32 @@ cell_t current_wave_index(IPluginContext *pContext, const cell_t *params)
 	return 0;
 }
 
+cell_t SpawnLocationClosestPointOnNavget(IPluginContext *pContext, const cell_t *params)
+{
+	CSpawnLocation *obj{(CSpawnLocation *)params[1]};
+	return obj->m_bClosestPointOnNav;
+}
+
+cell_t SpawnLocationClosestPointOnNavset(IPluginContext *pContext, const cell_t *params)
+{
+	CSpawnLocation *obj{(CSpawnLocation *)params[1]};
+	obj->m_bClosestPointOnNav = params[2];
+	return 0;
+}
+
+cell_t SpawnLocationRelativeget(IPluginContext *pContext, const cell_t *params)
+{
+	CSpawnLocation *obj{(CSpawnLocation *)params[1]};
+	return (cell_t)obj->m_relative;
+}
+
+cell_t SpawnLocationRelativeset(IPluginContext *pContext, const cell_t *params)
+{
+	CSpawnLocation *obj{(CSpawnLocation *)params[1]};
+	obj->m_relative = (RelativePositionType)params[2];
+	return 0;
+}
+
 sp_nativeinfo_t natives[] =
 {
 	{"CustomPopulationSpawner.set_data", set_data},
@@ -3163,6 +3297,10 @@ sp_nativeinfo_t natives[] =
 	{"pop_damage_multiplier", pop_damage_multiplier},
 	{"current_wave", current_wave},
 	{"current_wave_index", current_wave_index},
+	{"SpawnLocation.Relative.get", SpawnLocationRelativeget},
+	{"SpawnLocation.Relative.set", SpawnLocationRelativeset},
+	{"SpawnLocation.ClosestPointOnNav.get", SpawnLocationClosestPointOnNavget},
+	{"SpawnLocation.ClosestPointOnNav.set", SpawnLocationClosestPointOnNavset},
 	{NULL, NULL}
 };
 
@@ -3182,8 +3320,68 @@ void Sample::OnHandleDestroy(HandleType_t type, void *object)
 IForward *find_spawn_location = nullptr;
 IForward *wavespawn_parse = nullptr;
 
-DETOUR_DECL_MEMBER1(FindSpawnLocation, SpawnLocationResult, Vector &, vSpawnPosition)
+void *DoTeleporterOverridePtr{nullptr};
+
+SpawnLocationResult DoTeleporterOverride( CBaseEntity *spawnEnt, Vector& vSpawnPosition, bool bClosestPointOnNav )
 {
+	return (void_to_func<SpawnLocationResult(*)(CBaseEntity *, Vector &, bool)>(DoTeleporterOverridePtr))(spawnEnt, vSpawnPosition, bClosestPointOnNav);
+}
+
+//TODO!!!! update tf2sdk
+template< typename T, class A >
+void Shuffle( CUtlVector<T, A> &vec, IUniformRandomStream* pSteam )
+{
+	for ( int i = 0; i < vec.m_Size; i++ )
+	{
+		int j = pSteam ? pSteam->RandomInt( i, vec.m_Size - 1 ) : RandomInt( i, vec.m_Size - 1 );
+		if ( i != j )
+		{
+			V_swap( vec.m_Memory[ i ], vec.m_Memory[ j ] );
+		}
+	}
+}
+
+SpawnLocationResult CSpawnLocation::DetourFindSpawnLocation( Vector& vSpawnPosition )
+{
+	TFTeamSpawnVector_t activeSpawn;
+	for ( int i=0; i<m_teamSpawnVector.Count(); ++i )
+	{
+		if(strcmp(m_teamSpawnVector[i]->GetClassname(), "info_player_teamspawn") == 0) {
+			if ( m_teamSpawnVector[i]->IsDisabled() )
+				continue;
+		}
+
+		activeSpawn.AddToTail( m_teamSpawnVector[i] );
+	}
+
+	// treat spawn points as deck of cards. shuffle it when we run out
+	if ( m_nSpawnCount >= activeSpawn.Count() )
+	{
+		m_nRandomSeed = RandomInt( 0, 9999 );
+		m_nSpawnCount = 0;
+	}
+	CUniformRandomStream randomSpawn;
+	randomSpawn.SetSeed( m_nRandomSeed );
+	Shuffle( activeSpawn, &randomSpawn );
+
+	if ( activeSpawn.Count() > 0 )
+	{
+		// if any invading teleporters exist with this name, use them instead
+		SpawnLocationResult result = DoTeleporterOverride( activeSpawn[ m_nSpawnCount ], vSpawnPosition, m_bClosestPointOnNav );
+		if ( result != SPAWN_LOCATION_NOT_FOUND )
+		{
+			m_nSpawnCount++;
+			return result;
+		}
+	}
+
+	CTFNavArea *spawnArea = SelectSpawnArea();
+	if ( spawnArea )
+	{
+		vSpawnPosition = spawnArea->GetCenter();
+		return SPAWN_LOCATION_NAV;
+	}
+
 	if(find_spawn_location->GetFunctionCount() > 0) {
 		find_spawn_location->PushCell((cell_t)last_populator);
 		find_spawn_location->PushCell((cell_t)this);
@@ -3206,7 +3404,12 @@ DETOUR_DECL_MEMBER1(FindSpawnLocation, SpawnLocationResult, Vector &, vSpawnPosi
 		}
 	}
 
-	return DETOUR_MEMBER_CALL(FindSpawnLocation)(vSpawnPosition);
+	return SPAWN_LOCATION_NOT_FOUND;
+}
+
+DETOUR_DECL_MEMBER1(FindSpawnLocation, SpawnLocationResult, Vector &, vSpawnPosition)
+{
+	return ((CSpawnLocation *)this)->DetourFindSpawnLocation(vSpawnPosition);
 }
 
 CDetour *pParseSpawner = nullptr;
@@ -4059,6 +4262,8 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetMemSig("CWaveSpawnPopulator::GetCurrencyAmountPerDeath", &CWaveSpawnPopulatorGetCurrencyAmountPerDeath);
 
 	g_pGameConf->GetMemSig("CSpawnLocation::Parse", &CSpawnLocationParsePtr);
+	g_pGameConf->GetMemSig("CSpawnLocation::SelectSpawnArea", &CSpawnLocationSelectSpawnArea);
+	g_pGameConf->GetMemSig("DoTeleporterOverride", &DoTeleporterOverridePtr);
 
 	g_pGameConf->GetMemSig("ITFTeamSpawnAutoList::m_ITFTeamSpawnAutoListAutoList", (void **)&m_ITFTeamSpawnAutoListAutoList);
 
