@@ -225,6 +225,9 @@ methodmap CWaveSpawnPopulator < IPopulator
 {
 	public native bool ParseAdditive(KeyValues data);
 
+	public native int GetWaitForAllSpawned(char[] str, int len);
+	public native int GetWaitForAllDead(char[] str, int len);
+
 	property int TotalCount
 	{
 		public native get();

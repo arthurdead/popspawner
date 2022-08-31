@@ -2198,6 +2198,8 @@ void Sample::OnEntityCreated(CBaseEntity *pEntity, const char *classname)
 		}
 
 		*g_hMannVsMachineLogic = pLogic;
+	} else if(strcmp(classname, "tf_objective_resource") == 0) {
+		objective_resource_ref = gamehelpers->EntityToReference(pEntity);
 	}
 }
 
@@ -2226,6 +2228,8 @@ void Sample::OnEntityDestroyed(CBaseEntity *pEntity)
 	} else if(strcmp(classname, "tf_logic_mann_vs_machine") == 0) {
 		*g_hMannVsMachineLogic = nullptr;
 		mvm_logic_ref = INVALID_EHANDLE_INDEX;
+	} else if(strcmp(classname, "tf_objective_resource") == 0) {
+		objective_resource_ref = INVALID_EHANDLE_INDEX;
 	}
 }
 
@@ -2444,7 +2448,7 @@ struct entpopdata_t
 {
 	bool removed{false};
 	string_t icon{NULL_STRING};
-	int attrs{0};
+	int flags{MVM_CLASS_FLAG_NONE};
 	size_t m_currencyValue{TF_BASE_BOSS_CURRENCY};
 	IPopulationSpawner *m_spawner{nullptr};
 	CWaveSpawnPopulator *m_pWaveSpawnPopulator{nullptr};
@@ -2489,7 +2493,7 @@ static void pop_remove_entity(CBaseEntity *pEntity, entpopdata_t &data)
 
 		CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
 		if(pObjectiveResource) {
-			pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.attrs);
+			pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.flags);
 		}
 
 		CPopulationManager *PopulationManager = data.m_spawner->GetPopulator()->GetManager();
@@ -2624,6 +2628,37 @@ IForward *pop_entity_spawned{nullptr};
 
 CSpawnLocation *last_location{nullptr};
 
+static int calc_class_flags(IPopulator *populator, populator_type_t populator_type, IPopulationSpawner *spawner, int i)
+{
+	unsigned int iFlags = MVM_CLASS_FLAG_NONE;
+
+	if(populator_type == populator_wavespawn) {
+		if(((CWaveSpawnPopulator *)populator)->IsSupportWave()) {
+			iFlags |= MVM_CLASS_FLAG_SUPPORT;
+		} else {
+			iFlags |= MVM_CLASS_FLAG_NORMAL;
+		}
+
+		if(((CWaveSpawnPopulator *)populator)->IsLimitedSupportWave()) {
+			iFlags |= MVM_CLASS_FLAG_SUPPORT_LIMITED;
+		}
+	} else if(populator_type == populator_mission) {
+		iFlags |= MVM_CLASS_FLAG_MISSION;
+	} else {
+		iFlags |= MVM_CLASS_FLAG_NORMAL;
+	}
+
+	if(spawner->IsMiniBoss(i)) {
+		iFlags |= MVM_CLASS_FLAG_MINIBOSS;
+	}
+
+	if(spawner->HasAttribute(ALWAYS_CRIT, i)) {
+		iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
+	}
+
+	return iFlags;
+}
+
 static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 {
 	IPopulationSpawner *spawner = META_IFACEPTR(IPopulationSpawner);
@@ -2631,6 +2666,12 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 	IPopulator *populator = spawner->GetPopulator();
 
 	populator_type_t populator_type{get_populator_type(populator)};
+
+	unsigned int iFlagsBase = MVM_CLASS_FLAG_NONE;
+	bool various{spawner->IsVarious()};
+	if(!various) {
+		iFlagsBase = calc_class_flags(populator, populator_type, spawner, -1);
+	}
 
 	if(result) {
 		int count = result->Count();
@@ -2675,21 +2716,17 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 				icon = data.icon;
 			}
 
+			unsigned int iFlags{iFlagsBase};
+			if(various) {
+				iFlags = calc_class_flags(populator, populator_type, spawner, i);
+			}
+
 			CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
 			if(pObjectiveResource) {
 				if(populator_type == populator_wavespawn) {
 					pObjectiveResource->SetMannVsMachineWaveClassActive(icon);
 				} else if(populator_type == populator_mission) {
-					unsigned int iFlags = MVM_CLASS_FLAG_MISSION;
-					/*if ( bot->IsMiniBoss() )
-					{
-						iFlags |= MVM_CLASS_FLAG_MINIBOSS;
-					}
-					if ( bot->HasAttribute( CTFBot::ALWAYS_CRIT ) )
-					{
-						iFlags |= MVM_CLASS_FLAG_ALWAYSCRIT;
-					}*/
-					pObjectiveResource->IncrementMannVsMachineWaveClassCount(icon, iFlags);
+					//pObjectiveResource->IncrementMannVsMachineWaveClassCount(icon, iFlags);
 				}
 			}
 
@@ -2703,12 +2740,7 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 				data.icon = icon;
 			}
 
-			for(int j = 0; j < NUM_BOT_ATTRS; ++j) {
-				AttributeType attr{static_cast<AttributeType>(1 << j)};
-				if(spawner->HasAttribute(attr, i)) {
-					data.attrs |= attr;
-				}
-			}
+			data.flags |= iFlags;
 		}
 	}
 
@@ -3479,6 +3511,34 @@ cell_t CWaveSpawnPopulatorTotalCountget(IPluginContext *pContext, const cell_t *
 	return obj->m_totalCount;
 }
 
+cell_t CWaveSpawnPopulatorGetWaitForAllSpawned(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+
+	const char *str{obj->m_waitForAllSpawned.m_pString};
+	if(!str) {
+		str = "";
+	}
+
+	size_t written{0};
+	pContext->StringToLocalUTF8(params[2], params[3], str, &written);
+	return written;
+}
+
+cell_t CWaveSpawnPopulatorGetWaitForAllDead(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+
+	const char *str{obj->m_waitForAllDead.m_pString};
+	if(!str) {
+		str = "";
+	}
+
+	size_t written{0};
+	pContext->StringToLocalUTF8(params[2], params[3], str, &written);
+	return written;
+}
+
 cell_t CWaveSpawnPopulatorMaxActiveset(IPluginContext *pContext, const cell_t *params)
 {
 	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
@@ -3620,7 +3680,7 @@ cell_t CWaveWaveGetWaveSpawn(IPluginContext *pContext, const cell_t *params)
 
 	auto &m_waveSpawnVector{obj->m_waveSpawnVector};
 
-	size_t idx{params[1]};
+	size_t idx{params[2]};
 	if(idx < 0 || idx >= m_waveSpawnVector.Count() || !m_waveSpawnVector.IsValidIndex(idx)) {
 		return 0;
 	}
@@ -3863,6 +3923,8 @@ sp_nativeinfo_t natives[] =
 	{"CWaveSpawnPopulator.TotalCurrency.get", CWaveSpawnPopulatorTotalCurrencyget},
 	{"CWaveSpawnPopulator.ParseAdditive", CWaveSpawnPopulatorParseAdditive},
 	{"CWaveSpawnPopulator.Parent.get", CWaveSpawnPopulatorParentget},
+	{"CWaveSpawnPopulator.GetWaitForAllSpawned", CWaveSpawnPopulatorGetWaitForAllSpawned},
+	{"CWaveSpawnPopulator.GetWaitForAllDead", CWaveSpawnPopulatorGetWaitForAllDead},
 	{"CWave.WaitWhenDone.set", CWaveWaitWhenDoneset},
 	{"CWave.WaitWhenDone.get", CWaveWaitWhenDoneget},
 	{"CWave.Index.get", CWaveIndexget},
