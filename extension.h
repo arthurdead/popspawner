@@ -38,22 +38,29 @@
  */
 
 #include "smsdk_ext.h"
-
+#include <ISDKHooks.h>
 
 /**
  * @brief Sample implementation of the SDK Extension.
  * Note: Uncomment one of the pre-defined virtual functions in order to use it.
  */
-class Sample : public SDKExtension, public IHandleTypeDispatch, public IPluginsListener, public IConCommandBaseAccessor
+class Sample : public SDKExtension, public IHandleTypeDispatch, public IPluginsListener, public IConCommandBaseAccessor, public ISMEntityListener
 {
 public:
+	virtual void OnEntityCreated(CBaseEntity *pEntity, const char *classname);
+	virtual void OnEntityDestroyed(CBaseEntity *pEntity);
+
 	virtual void OnCoreMapStart(edict_t *pEdictList, int edictCount, int clientMax);
+	virtual void OnCoreMapEnd();
 
 	virtual void OnHandleDestroy(HandleType_t type, void *object);
 	virtual void OnPluginUnloaded(IPlugin *plugin);
 	
 	virtual bool RegisterConCommandBase(ConCommandBase *pCommand);
-	
+
+	virtual void NotifyInterfaceDrop(SMInterface *pInterface);
+	virtual bool QueryInterfaceDrop(SMInterface *pInterface);
+
 	/**
 	 * @brief This is called after the initial loading sequence has been processed.
 	 *
@@ -73,7 +80,7 @@ public:
 	 * @brief This is called once all known extensions have been loaded.
 	 * Note: It is is a good idea to add natives here, if any are provided.
 	 */
-	//virtual void SDK_OnAllLoaded();
+	virtual void SDK_OnAllLoaded();
 
 	/**
 	 * @brief Called when the pause state is changed.
@@ -87,7 +94,7 @@ public:
 	 * @param maxlen	Size of error message buffer.
 	 * @return			True if working, false otherwise.
 	 */
-	//virtual bool QueryRunning(char *error, size_t maxlen);
+	virtual bool QueryRunning(char *error, size_t maxlen);
 public:
 #if defined SMEXT_CONF_METAMOD
 	/**

@@ -44,11 +44,6 @@
 				"library" "server"
 				"linux" "@_ZN18CPopulationManager14OnPlayerKilledEP9CTFPlayer"
 			}
-			"g_pPopulationManager"
-			{
-				"library" "server"
-				"linux" "@g_pPopulationManager"
-			}
 			"CTFPowerup::DropSingleInstance"
 			{
 				"library" "server"
@@ -158,6 +153,26 @@
 			{
 				"library" "server"
 				"linux" "@_ZN18CPopulationManager10InitializeEv"
+			}
+			"CPopulationManager::UpdateObjectiveResource"
+			{
+				"library" "server"
+				"linux" "@_ZN18CPopulationManager23UpdateObjectiveResourceEv"
+			}
+			"g_pPopulationManager"
+			{
+				"library" "server"
+				"linux" "@g_pPopulationManager"
+			}
+			"g_pMVMStats"
+			{
+				"library" "server"
+				"linux" "@_ZL11g_pMVMStats"
+			}
+			"g_hMannVsMachineLogic"
+			{
+				"library" "server"
+				"linux" "@g_hMannVsMachineLogic"
 			}
 		}
 	}

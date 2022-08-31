@@ -278,7 +278,7 @@ methodmap CWave < IPopulator
 {
 	public native bool ParseAdditive(KeyValues data);
 
-	public native void AddWaveSpawn(CWaveSpawnPopulator wavePopulator);
+	public native bool AddWaveSpawn(CWaveSpawnPopulator wavePopulator);
 
 	property float WaitWhenDone
 	{
@@ -299,6 +299,8 @@ native float pop_damage_multiplier();
 
 native CWave current_wave();
 native int current_wave_index();
+native CWave get_wave(int i);
+native int wave_count();
 
 native bool init_pop();
 native bool set_pop_filename(const char[] path);
