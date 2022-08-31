@@ -3583,6 +3583,12 @@ cell_t CWaveSpawnPopulatorTotalCurrencyget(IPluginContext *pContext, const cell_
 	return obj->m_totalCurrency;
 }
 
+cell_t CWaveSpawnPopulatorParentget(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+	return (cell_t)obj->m_pParent;
+}
+
 cell_t CWaveWaitWhenDoneset(IPluginContext *pContext, const cell_t *params)
 {
 	CWave *obj{(CWave *)params[1]};
@@ -3856,6 +3862,7 @@ sp_nativeinfo_t natives[] =
 	{"CWaveSpawnPopulator.TotalCurrency.set", CWaveSpawnPopulatorTotalCurrencyset},
 	{"CWaveSpawnPopulator.TotalCurrency.get", CWaveSpawnPopulatorTotalCurrencyget},
 	{"CWaveSpawnPopulator.ParseAdditive", CWaveSpawnPopulatorParseAdditive},
+	{"CWaveSpawnPopulator.Parent.get", CWaveSpawnPopulatorParentget},
 	{"CWave.WaitWhenDone.set", CWaveWaitWhenDoneset},
 	{"CWave.WaitWhenDone.get", CWaveWaitWhenDoneget},
 	{"CWave.Index.get", CWaveIndexget},

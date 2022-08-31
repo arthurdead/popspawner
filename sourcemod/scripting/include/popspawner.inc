@@ -272,6 +272,11 @@ methodmap CWaveSpawnPopulator < IPopulator
 		public native get();
 		public native set(int value);
 	}
+
+	property CWave Parent
+	{
+		public native get();
+	}
 };
 
 #define CWaveSpawnPopulator_Null (view_as<CWaveSpawnPopulator>(Address_Null))
