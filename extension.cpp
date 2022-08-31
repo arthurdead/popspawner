@@ -991,6 +991,7 @@ public:
 	bool DetourParse( void );
 
 	bool ParseAdditive( const char *populationFile );
+	bool ParseAdditive( KeyValues *values );
 
 	KeyValues *GetTemplate( const char *pszName )
 	{
@@ -1368,6 +1369,7 @@ public:
 	}
 
 	bool DetourParse( KeyValues *values );
+	bool ParseAdditive( KeyValues *values );
 
 	bool IsLimitedSupportWave( void ) const { return m_bLimitedSupport; }
 	bool IsSupportWave( void ) const { return m_bSupportWave; }
@@ -3429,6 +3431,19 @@ cell_t CWaveParseAdditive(IPluginContext *pContext, const cell_t *params)
 	return obj->ParseAdditive(pKv);
 }
 
+cell_t CWaveSpawnPopulatorParseAdditive(IPluginContext *pContext, const cell_t *params)
+{
+	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
+
+	HandleError err{};
+	KeyValues *pKv = smutils->ReadKeyValuesHandle(params[2], &err);
+	if(err != HandleError_None) {
+		return pContext->ThrowNativeError("Invalid KeyValues handle %x (error %d).", params[2], err);
+	}
+
+	return obj->ParseAdditive(pKv);
+}
+
 cell_t CWaveAddWaveSpawn(IPluginContext *pContext, const cell_t *params)
 {
 	CWave *obj{(CWave *)params[1]};
@@ -3587,6 +3602,26 @@ cell_t CWaveIndexget(IPluginContext *pContext, const cell_t *params)
 	return obj->getvars().index;
 }
 
+cell_t CWaveWaveSpawnCountget(IPluginContext *pContext, const cell_t *params)
+{
+	CWave *obj{(CWave *)params[1]};
+	return obj->m_waveSpawnVector.Count();
+}
+
+cell_t CWaveWaveGetWaveSpawn(IPluginContext *pContext, const cell_t *params)
+{
+	CWave *obj{(CWave *)params[1]};
+
+	auto &m_waveSpawnVector{obj->m_waveSpawnVector};
+
+	size_t idx{params[1]};
+	if(idx < 0 || idx >= m_waveSpawnVector.Count() || !m_waveSpawnVector.IsValidIndex(idx)) {
+		return 0;
+	}
+
+	return (cell_t)(m_waveSpawnVector[idx]);
+}
+
 cell_t pop_health_multiplier(IPluginContext *pContext, const cell_t *params)
 {
 	float mult = 1.0f;
@@ -3658,6 +3693,33 @@ cell_t wave_count(IPluginContext *pContext, const cell_t *params)
 	return 0;
 }
 
+cell_t get_populator(IPluginContext *pContext, const cell_t *params)
+{
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(!PopulationManager) {
+		return 0;
+	}
+
+	auto &m_populatorVector{PopulationManager->GetMembers().m_populatorVector};
+
+	size_t idx{params[1]};
+	if(idx < 0 || idx >= m_populatorVector.Count() || !m_populatorVector.IsValidIndex(idx)) {
+		return 0;
+	}
+
+	return (cell_t)(m_populatorVector[idx]);
+}
+
+cell_t populator_count(IPluginContext *pContext, const cell_t *params)
+{
+	CPopulationManager *PopulationManager{GetPopulationManager()};
+	if(PopulationManager) {
+		return PopulationManager->GetMembers().m_populatorVector.Count();
+	}
+
+	return 0;
+}
+
 cell_t SpawnLocationClosestPointOnNavget(IPluginContext *pContext, const cell_t *params)
 {
 	CSpawnLocation *obj{(CSpawnLocation *)params[1]};
@@ -3716,10 +3778,13 @@ cell_t merge_pop(IPluginContext *pContext, const cell_t *params)
 		return 0;
 	}
 
-	char *populationFile{nullptr};
-	pContext->LocalToString(params[1], &populationFile);
+	HandleError err{};
+	KeyValues *pKv = smutils->ReadKeyValuesHandle(params[1], &err);
+	if(err != HandleError_None) {
+		return pContext->ThrowNativeError("Invalid KeyValues handle %x (error %d).", params[1], err);
+	}
 
-	return PopulationManager->ParseAdditive(populationFile);
+	return PopulationManager->ParseAdditive(pKv);
 }
 
 cell_t add_populator(IPluginContext *pContext, const cell_t *params)
@@ -3790,17 +3855,22 @@ sp_nativeinfo_t natives[] =
 	{"CWaveSpawnPopulator.RandomSpawn.get", CWaveSpawnPopulatorRandomSpawnget},
 	{"CWaveSpawnPopulator.TotalCurrency.set", CWaveSpawnPopulatorTotalCurrencyset},
 	{"CWaveSpawnPopulator.TotalCurrency.get", CWaveSpawnPopulatorTotalCurrencyget},
+	{"CWaveSpawnPopulator.ParseAdditive", CWaveSpawnPopulatorParseAdditive},
 	{"CWave.WaitWhenDone.set", CWaveWaitWhenDoneset},
 	{"CWave.WaitWhenDone.get", CWaveWaitWhenDoneget},
 	{"CWave.Index.get", CWaveIndexget},
 	{"CWave.ParseAdditive", CWaveParseAdditive},
 	{"CWave.AddWaveSpawn", CWaveAddWaveSpawn},
+	{"CWave.WaveSpawnCount.get", CWaveWaveSpawnCountget},
+	{"CWave.GetWaveSpawn", CWaveWaveGetWaveSpawn},
 	{"pop_health_multiplier", pop_health_multiplier},
 	{"pop_damage_multiplier", pop_damage_multiplier},
 	{"current_wave", current_wave},
 	{"current_wave_index", current_wave_index},
 	{"wave_count", wave_count},
 	{"get_wave", get_wave},
+	{"get_populator", get_populator},
+	{"populator_count", populator_count},
 	{"SpawnLocation.Relative.get", SpawnLocationRelativeget},
 	{"SpawnLocation.Relative.set", SpawnLocationRelativeset},
 	{"SpawnLocation.ClosestPointOnNav.get", SpawnLocationClosestPointOnNavget},
@@ -3988,49 +4058,8 @@ DETOUR_DECL_STATIC2_callconv(FireEvent, void, __attribute__((__regparm__(2))), E
 	DETOUR_STATIC_CALL(FireEvent)(eventInfo, eventName);
 }
 
-bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
+bool CWaveSpawnPopulator::ParseAdditive( KeyValues *values )
 {
-	delete m_startWaveOutput;
-	m_startWaveOutput = nullptr;
-
-	delete m_firstSpawnOutput;
-	m_firstSpawnOutput = nullptr;
-
-	delete m_lastSpawnOutput;
-	m_lastSpawnOutput = nullptr;
-
-	delete m_doneOutput;
-	m_doneOutput = nullptr;
-
-	m_name.Purge();
-	m_waitForAllSpawned.Purge();
-	m_waitForAllDead.Purge();
-	m_activeVector.RemoveAll();
-
-	m_pParent = nullptr;
-
-	m_where.m_teamSpawnVector.RemoveAll();
-
-	// First, see if we have any Template keys
-	KeyValues *pTemplate = values->FindKey( "Template" );
-	if ( pTemplate )
-	{
-		KeyValues *pTemplateKV = GetManager()->GetTemplate( pTemplate->GetString() );
-		if ( pTemplateKV )
-		{
-			// Pump all the keys into ourself now
-			if ( DetourParse( pTemplateKV ) == false )
-			{
-				return false;
-			}
-		}
-		else
-		{
-			Warning( "Unknown Template '%s' in WaveSpawn definition\n", pTemplate->GetString() );
-			return false;
-		}
-	}
-
 	for ( KeyValues *data = values->GetFirstSubKey(); data != NULL; data = data->GetNextKey() )
 	{
 		const char *name = data->GetName();
@@ -4045,11 +4074,24 @@ bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
 			continue;
 		}
 
-		// Skip templates when looping through the rest of the keys
 		if ( !Q_stricmp( name, "Template" ) )
-			continue;
-
-		if ( !Q_stricmp( name, "TotalCount" ) )
+		{
+			KeyValues *pTemplateKV = GetManager()->GetTemplate( data->GetString() );
+			if ( pTemplateKV )
+			{
+				// Pump all the keys into ourself now
+				if ( ParseAdditive( pTemplateKV ) == false )
+				{
+					return false;
+				}
+			}
+			else
+			{
+				Warning( "Unknown Template '%s' in WaveSpawn definition\n", data->GetString() );
+				return false;
+			}
+		}
+		else if ( !Q_stricmp( name, "TotalCount" ) )
 		{
 			m_totalCount = data->GetInt();
 		}
@@ -4161,6 +4203,9 @@ bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
 		}
 		else
 		{
+			if(m_spawner) {
+				delete m_spawner;
+			}
 			m_spawner = ParseSpawner( this, data );
 
 			if ( m_spawner == NULL )
@@ -4202,6 +4247,37 @@ bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
 	}
 
 	return true;
+}
+
+bool CWaveSpawnPopulator::DetourParse( KeyValues *values )
+{
+	delete m_startWaveOutput;
+	m_startWaveOutput = nullptr;
+
+	delete m_firstSpawnOutput;
+	m_firstSpawnOutput = nullptr;
+
+	delete m_lastSpawnOutput;
+	m_lastSpawnOutput = nullptr;
+
+	delete m_doneOutput;
+	m_doneOutput = nullptr;
+
+	m_name.Purge();
+	m_waitForAllSpawned.Purge();
+	m_waitForAllDead.Purge();
+	m_activeVector.RemoveAll();
+
+	m_pParent = nullptr;
+
+	m_where.m_teamSpawnVector.RemoveAll();
+
+	delete m_spawner;
+
+	m_unallocatedCurrency = m_totalCurrency = 0;
+	m_remainingCount = m_totalCount = 0;
+
+	return ParseAdditive(values);
 }
 
 DETOUR_DECL_MEMBER1(WaveSpawnPopulatorParse, bool, KeyValues *, values)
@@ -4492,18 +4568,11 @@ struct scope_manager_vars_t
 	}
 };
 
-bool CPopulationManager::ParseAdditive( const char *populationFile )
+bool CPopulationManager::ParseAdditive( KeyValues *values )
 {
 	scope_manager_vars_t scope_vars{this};
 
 	CPopulationManager_members_t &members{GetMembers()};
-
-	KeyValues::AutoDelete values{ new KeyValues( "Population" ) };
-	if ( !values->LoadFromFile( filesystem, populationFile, "POPULATION" ) )
-	{
-		Warning( "Can't open %s.\n", populationFile );
-		return false;
-	}
 
 	// find templates first
 	KeyValues *pTemplates = values->FindKey( "Templates" );
@@ -4734,6 +4803,20 @@ bool CPopulationManager::ParseAdditive( const char *populationFile )
 	}
 
 	return true;
+}
+
+bool CPopulationManager::ParseAdditive( const char *populationFile )
+{
+	CPopulationManager_members_t &members{GetMembers()};
+
+	KeyValues::AutoDelete values{ new KeyValues( "Population" ) };
+	if ( !values->LoadFromFile( filesystem, populationFile, "POPULATION" ) )
+	{
+		Warning( "Can't open %s.\n", populationFile );
+		return false;
+	}
+
+	return ParseAdditive(values);
 }
 
 bool CPopulationManager::DetourParse( void )

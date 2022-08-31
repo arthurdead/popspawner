@@ -223,6 +223,8 @@ forward Action find_spawn_location(IPopulator populator, SpawnLocation location,
 
 methodmap CWaveSpawnPopulator < IPopulator
 {
+	public native bool ParseAdditive(KeyValues data);
+
 	property int TotalCount
 	{
 		public native get();
@@ -290,6 +292,13 @@ methodmap CWave < IPopulator
 	{
 		public native get();
 	}
+
+	property int WaveSpawnCount
+	{
+		public native get();
+	}
+
+	public native CWaveSpawnPopulator GetWaveSpawn(int idx);
 };
 
 #define CWave_Null (view_as<CWave>(Address_Null))
@@ -301,10 +310,12 @@ native CWave current_wave();
 native int current_wave_index();
 native CWave get_wave(int i);
 native int wave_count();
+native IPopulator get_populator(int i);
+native int populator_count();
 
 native bool init_pop();
 native bool set_pop_filename(const char[] path);
-native bool merge_pop(const char[] path);
+native bool merge_pop(KeyValues data);
 
 native bool add_populator(IPopulator populator);
 
