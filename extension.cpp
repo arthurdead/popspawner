@@ -2721,12 +2721,14 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 				iFlags = calc_class_flags(populator, populator_type, spawner, i);
 			}
 
-			CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
-			if(pObjectiveResource) {
-				if(populator_type == populator_wavespawn) {
-					pObjectiveResource->SetMannVsMachineWaveClassActive(icon);
-				} else if(populator_type == populator_mission) {
-					//pObjectiveResource->IncrementMannVsMachineWaveClassCount(icon, iFlags);
+			if(icon != NULL_STRING) {
+				CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
+				if(pObjectiveResource) {
+					if(populator_type == populator_wavespawn) {
+						pObjectiveResource->SetMannVsMachineWaveClassActive(icon);
+					} else if(populator_type == populator_mission) {
+						//pObjectiveResource->IncrementMannVsMachineWaveClassCount(icon, iFlags);
+					}
 				}
 			}
 
@@ -4127,6 +4129,8 @@ DETOUR_DECL_STATIC2_callconv(FireEvent, void, __attribute__((__regparm__(2))), E
 	DETOUR_STATIC_CALL(FireEvent)(eventInfo, eventName);
 }
 
+static CWave *last_wave{nullptr};
+
 bool CWaveSpawnPopulator::ParseAdditive( KeyValues *values )
 {
 	for ( KeyValues *data = values->GetFirstSubKey(); data != NULL; data = data->GetNextKey() )
@@ -4297,6 +4301,7 @@ bool CWaveSpawnPopulator::ParseAdditive( KeyValues *values )
 			return false;
 		}
 
+		wavespawn_parse->PushCell((cell_t)last_wave);
 		wavespawn_parse->PushCell((cell_t)this);
 		wavespawn_parse->PushCell(hndl);
 		cell_t result = 0;
@@ -4420,8 +4425,23 @@ bool CWave::AddWaveSpawn( CWaveSpawnPopulator *wavePopulator )
 	return true;
 }
 
+struct scope_wave_vars_t
+{
+	scope_wave_vars_t(CWave *wave)
+	{
+		last_wave = wave;
+	}
+
+	~scope_wave_vars_t()
+	{
+		last_wave = nullptr;
+	}
+};
+
 bool CWave::ParseAdditive( KeyValues *data )
 {
+	scope_wave_vars_t vars{this};
+
 	FOR_EACH_SUBKEY( data, kvWave )
 	{
 		if ( !Q_stricmp( kvWave->GetName(), "WaveSpawn" ) )

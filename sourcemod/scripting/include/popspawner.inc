@@ -328,7 +328,7 @@ native bool merge_pop(KeyValues data);
 native bool add_populator(IPopulator populator);
 
 forward Action pop_parse(KeyValues data, bool &result);
-forward Action wavespawn_parse(CWaveSpawnPopulator populator, KeyValues data, bool &result);
+forward Action wavespawn_parse(CWave wave, CWaveSpawnPopulator populator, KeyValues data, bool &result);
 forward Action wave_parse(CWave populator, KeyValues data, bool &result);
 forward Action spawner_parse(IPopulator populator, IPopulationSpawner spawner, KeyValues data, bool &result);
 forward Action spawnlocation_parse(IPopulator populator, SpawnLocation location, KeyValues data, bool &result);
