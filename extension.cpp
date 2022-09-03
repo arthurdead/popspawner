@@ -383,6 +383,7 @@ int m_hMovePeerOffset = -1;
 
 int CBaseEntitySetOwnerEntity = -1;
 int CBaseEntityWorldSpaceCenter = -1;
+int CBaseEntityAcceptInput = -1;
 
 float k_flMaxEntityEulerAngle = 360.0 * 1000.0f;
 float k_flMaxEntityPosCoord = MAX_COORD_FLOAT;
@@ -453,6 +454,24 @@ int m_vecAbsOriginOffset = -1;
 int m_iClassnameOffset = -1;
 
 class CBasePlayer;
+
+struct variant_t
+{
+	union
+	{
+		bool bVal;
+		string_t iszVal;
+		int iVal;
+		float flVal;
+		float vecVal[3];
+		color32 rgbaVal;
+	};
+	CHandle<CBaseEntity> eVal; // this can't be in the union because it has a constructor.
+
+	fieldtype_t fieldType;
+
+	void SetString( string_t str ) { iszVal = str, fieldType = FIELD_STRING; }
+};
 
 class CBaseEntity : public IServerEntity
 {
@@ -840,6 +859,11 @@ public:
 			return true;
 
 		return false;
+	}
+
+	bool AcceptInput( const char *szInputName, CBaseEntity *pActivator, CBaseEntity *pCaller, variant_t Value, int outputID )
+	{
+		return call_vfunc<bool, CBaseEntity, const char *, CBaseEntity *, CBaseEntity *, variant_t, int>(this, CBaseEntityAcceptInput, szInputName, pActivator, pCaller, Value, outputID);
 	}
 
 	static CBaseEntity *CreateNoSpawn( const char *szName, const Vector &vecOrigin, const QAngle &vecAngles, CBaseEntity *pOwner = NULL )
@@ -2140,11 +2164,25 @@ public:
 
 CHandle<CMannVsMachineLogic> *g_hMannVsMachineLogic{nullptr};
 
+static int tf_gamerules_ref{INVALID_EHANDLE_INDEX};
+
+#define DOWNLOADABLE_FILE_TABLENAME	"downloadables"
+
+INetworkStringTableContainer *netstringtables = NULL;
+INetworkStringTable *m_pDownloadableFileTable = nullptr;
+
 void Sample::OnCoreMapStart(edict_t *pEdictList, int edictCount, int clientMax)
 {
+	m_pDownloadableFileTable = netstringtables->FindTable(DOWNLOADABLE_FILE_TABLENAME);
+
 	CBaseEntity *pEntity = FindEntityByClassname(nullptr, "tf_objective_resource");
 	if(pEntity) {
 		objective_resource_ref = gamehelpers->EntityToReference(pEntity);
+	}
+
+	pEntity = FindEntityByClassname(nullptr, "tf_gamerules");
+	if(pEntity) {
+		tf_gamerules_ref = gamehelpers->EntityToReference(pEntity);
 	}
 }
 
@@ -2154,6 +2192,7 @@ void Sample::OnCoreMapEnd()
 	mvm_stats_ref = INVALID_EHANDLE_INDEX;
 	mvm_logic_ref = INVALID_EHANDLE_INDEX;
 	populator_ref = INVALID_EHANDLE_INDEX;
+	tf_gamerules_ref = INVALID_EHANDLE_INDEX;
 }
 
 void Sample::OnEntityCreated(CBaseEntity *pEntity, const char *classname)
@@ -2200,6 +2239,8 @@ void Sample::OnEntityCreated(CBaseEntity *pEntity, const char *classname)
 		*g_hMannVsMachineLogic = pLogic;
 	} else if(strcmp(classname, "tf_objective_resource") == 0) {
 		objective_resource_ref = gamehelpers->EntityToReference(pEntity);
+	} else if(strcmp(classname, "tf_gamerules") == 0) {
+		tf_gamerules_ref = gamehelpers->EntityToReference(pEntity);
 	}
 }
 
@@ -2230,6 +2271,8 @@ void Sample::OnEntityDestroyed(CBaseEntity *pEntity)
 		mvm_logic_ref = INVALID_EHANDLE_INDEX;
 	} else if(strcmp(classname, "tf_objective_resource") == 0) {
 		objective_resource_ref = INVALID_EHANDLE_INDEX;
+	} else if(strcmp(classname, "tf_gamerules") == 0) {
+		tf_gamerules_ref = INVALID_EHANDLE_INDEX;
 	}
 }
 
@@ -3885,6 +3928,69 @@ cell_t add_populator(IPluginContext *pContext, const cell_t *params)
 	return 1;
 }
 
+static bool g_bInUpgradesParse{false};
+
+cell_t set_upgrades_file(IPluginContext *pContext, const cell_t *params)
+{
+	char *path_ptr{nullptr};
+	pContext->LocalToString(params[1], &path_ptr);
+
+	FileHandle_t file = filesystem->Open(path_ptr, "r", "UPGRADES");
+	if(!file) {
+		return pContext->ThrowNativeError("could not open %s", path_ptr);
+	}
+
+	unsigned int size{filesystem->Size(file)};
+
+	char *buf{new char[size]};
+
+	filesystem->Read(buf, size, file);
+
+	CRC32_t crc = CRC32_ProcessSingleBuffer(buf, size);
+
+	filesystem->Close(file);
+
+	char new_path_relative[MAX_PATH];
+	sprintf(new_path_relative, "scripts/items/mvm_upgrades_%lx.txt", crc);
+
+	char new_path_full[MAX_PATH];
+	smutils->BuildPath(Path_Game, new_path_full, MAX_PATH, "%s", new_path_relative);
+
+	file = filesystem->Open(new_path_full, "w+", "GAME");
+	if(!file) {
+		delete[] buf;
+		return pContext->ThrowNativeError("could not open %s", new_path_full);
+	}
+
+	filesystem->Write(buf, size, file);
+
+	filesystem->Close(file);
+
+	delete[] buf;
+
+	if(m_pDownloadableFileTable->FindStringIndex(new_path_relative) == INVALID_STRING_INDEX) {
+		bool lock = engine->LockNetworkStringTables(true);
+		m_pDownloadableFileTable->AddString(true, new_path_relative);
+		engine->LockNetworkStringTables(lock);
+	}
+
+	//TODO!!!!! sendfile to already connected clients
+
+	CBaseEntity *pEntity = gamehelpers->ReferenceToEntity(tf_gamerules_ref);
+	if(!pEntity) {
+		return pContext->ThrowNativeError("gamerules entity not found");
+	}
+
+	variant_t value{};
+	value.SetString(MAKE_STRING(new_path_relative));
+
+	g_bInUpgradesParse = true;
+	pEntity->AcceptInput("SetCustomUpgradesFile", nullptr, nullptr, value, -1);
+	g_bInUpgradesParse = false;
+
+	return 0;
+}
+
 sp_nativeinfo_t natives[] =
 {
 	{"CustomPopulationSpawner.set_data", set_data},
@@ -3968,6 +4074,7 @@ sp_nativeinfo_t natives[] =
 	{"init_pop", init_pop},
 	{"merge_pop", merge_pop},
 	{"add_populator", add_populator},
+	{"set_upgrades_file", set_upgrades_file},
 	{NULL, NULL}
 };
 
@@ -4100,8 +4207,11 @@ bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool l
 	GET_V_IFACE_CURRENT(GetEngineFactory, icvar, ICvar, CVAR_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetServerFactory, servertools, IServerTools, VSERVERTOOLS_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetEngineFactory, filesystem, IFileSystem, FILESYSTEM_INTERFACE_VERSION)
+	GET_V_IFACE_ANY(GetEngineFactory, netstringtables, INetworkStringTableContainer, INTERFACENAME_NETWORKSTRINGTABLESERVER)
 	g_pCVar = icvar;
 	ConVar_Register(0, this);
+
+	m_pDownloadableFileTable = netstringtables->FindTable(DOWNLOADABLE_FILE_TABLENAME);
 
 	tf_populator_health_multiplier = g_pCVar->FindVar("tf_populator_health_multiplier");
 	tf_mvm_endless_tank_boost = g_pCVar->FindVar("tf_mvm_endless_tank_boost");
@@ -4962,7 +5072,9 @@ DETOUR_DECL_MEMBER1(WaveParse, bool, KeyValues *, values)
 
 DETOUR_DECL_MEMBER4(KeyValuesLoadFromFile, bool, IBaseFileSystem *,filesystem, const char *,resourceName, const char *,pathID, bool, refreshCache)
 {
-	if(g_bInPopParse) {
+	if(g_bInUpgradesParse) {
+		pathID = "UPGRADES";
+	} else if(g_bInPopParse) {
 		pathID = "POPULATION";
 	}
 	return DETOUR_MEMBER_CALL(KeyValuesLoadFromFile)(filesystem, resourceName, pathID, refreshCache);
@@ -5100,14 +5212,23 @@ void Sample::NotifyInterfaceDrop(SMInterface *pInterface)
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
 	char pPath[MAX_PATH];
-	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
-	filesystem->AddSearchPath( pPath, "POPULATION" );
 	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/population");
-	filesystem->AddSearchPath( pPath, "POPULATION" );
-	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/population");
 	filesystem->AddSearchPath( pPath, "POPULATION" );
 	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/population");
 	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/population");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/items");
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/upgrades");
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/upgrades");
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
 
 	gameconfs->LoadGameConfigFile("popspawner", &g_pGameConf, error, maxlen);
 	
@@ -5180,6 +5301,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	g_pGameConf->GetOffset("CBaseEntity::SetOwnerEntity", &CBaseEntitySetOwnerEntity);
 	g_pGameConf->GetOffset("CBaseEntity::WorldSpaceCenter", &CBaseEntityWorldSpaceCenter);
+	g_pGameConf->GetOffset("CBaseEntity::AcceptInput", &CBaseEntityAcceptInput);
 
 	g_pEntityList = reinterpret_cast<CBaseEntityList *>(gamehelpers->GetGlobalEntityList());
 

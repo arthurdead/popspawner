@@ -16,6 +16,10 @@
 			{
 				"linux" "153"
 			}
+			"CBaseEntity::AcceptInput"
+			{
+				"linux" "37"
+			}
 		}
 		"Signatures"
 		{
