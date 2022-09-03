@@ -2894,29 +2894,47 @@ IPopulator *ParsePopulator(CPopulationManager *PopulationManager, const char *na
 	return nullptr;
 }
 
+IForward *replace_spawner{nullptr};
+
 DETOUR_DECL_STATIC2(ParseSpawner, IPopulationSpawner *, IPopulator *, populator, KeyValues *, data)
 {
-	IPopulationSpawner *spawner = DETOUR_STATIC_CALL(ParseSpawner)(populator, data);
-	if(!spawner) {
-		const char *name_ptr = data->GetName();
-		std::string name{name_ptr};
-		
-		pop_entry_map_t::const_iterator it{
-			std::find_if(poentrypmap.cbegin(), poentrypmap.cend(),
-				[&name = std::as_const(name)](const auto &it) noexcept -> bool {
-					return (strncasecmp(it.first.c_str(), name.c_str(), it.first.length()) == 0);
-				}
-			)
-		};
-		if(it != poentrypmap.end()) {
-			pop_entry_t *entry = it->second;
-			spawner = new SPPopulationSpawner{entry, populator};
-			
-			if(!spawner->Parse(data)) {
-				Warning( "Warning reading %s spawner definition\n", name_ptr );
-				delete spawner;
-				spawner = nullptr;
+	const char *old_name = data->GetName();
+
+	std::string name{old_name};
+	
+	pop_entry_map_t::const_iterator it{
+		std::find_if(poentrypmap.cbegin(), poentrypmap.cend(),
+			[&name = std::as_const(name)](const auto &it) noexcept -> bool {
+				return (strncasecmp(it.first.c_str(), name.c_str(), it.first.length()) == 0);
 			}
+		)
+	};
+
+	if(replace_spawner->GetFunctionCount() > 0 && it == poentrypmap.cend()) {
+		char new_name[64];
+		strcpy(new_name, old_name);
+
+		replace_spawner->PushStringEx(new_name, sizeof(new_name), SM_PARAM_STRING_COPY|SM_PARAM_STRING_UTF8, SM_PARAM_COPYBACK);
+		replace_spawner->PushCell(sizeof(new_name));
+		cell_t res = 0;
+		replace_spawner->Execute(&res);
+
+		if(res == Pl_Changed) {
+			data->SetName(new_name);
+		} else if(res >= Pl_Handled) {
+			return nullptr;
+		}
+	}
+
+	IPopulationSpawner *spawner = DETOUR_STATIC_CALL(ParseSpawner)(populator, data);
+	if(!spawner && it != poentrypmap.end()) {
+		pop_entry_t *entry = it->second;
+		spawner = new SPPopulationSpawner{entry, populator};
+		
+		if(!spawner->Parse(data)) {
+			Warning( "Warning reading %s spawner definition\n", old_name );
+			delete spawner;
+			spawner = nullptr;
 		}
 	}
 
@@ -5181,6 +5199,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	pop_event_fired = forwards->CreateForward("pop_event_fired", ET_Ignore, 1, nullptr, Param_String);
 	is_bonus_wave = forwards->CreateForward("is_bonus_wave", ET_Hook, 3, nullptr, Param_CellByRef, Param_CellByRef, Param_Array);
 	pop_entity_spawned = forwards->CreateForward("pop_entity_spawned", ET_Ignore, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_Cell);
+	replace_spawner = forwards->CreateForward("replace_spawner", ET_Hook, 2, nullptr, Param_String, Param_Cell);
 
 	sharesys->AddNatives(myself, natives);
 	
@@ -5213,5 +5232,6 @@ void Sample::SDK_OnUnload()
 	forwards->ReleaseForward(is_bonus_wave);
 	forwards->ReleaseForward(pop_entity_spawned);
 	forwards->ReleaseForward(spawner_parse);
+	forwards->ReleaseForward(replace_spawner);
 	handlesys->RemoveType(popspawner_handle, myself->GetIdentity());
 }
