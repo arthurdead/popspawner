@@ -5151,7 +5151,7 @@ DETOUR_DECL_MEMBER0(StartCurrentWave, void)
 				}
 
 				if(!bFoundSpawnPoint) {
-					Warning( "CPopulationManager::StartCurrentWave trying to spawn a bonus boss, but cannot find %s %s in the map", tf_mvm_bonus_spawnpoint_name.GetString(), tf_mvm_bonus_spawnpoint_classname.GetString() );
+					Warning( "CPopulationManager::StartCurrentWave trying to spawn a bonus boss, but cannot find %s %s in the map\n", tf_mvm_bonus_spawnpoint_name.GetString(), tf_mvm_bonus_spawnpoint_classname.GetString() );
 					RemoveEntity( members.m_hBonusBoss );
 					members.m_hBonusBoss = NULL;
 					members.m_bBonusRound = false;
