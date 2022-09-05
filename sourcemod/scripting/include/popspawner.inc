@@ -341,7 +341,7 @@ forward void pop_event_fired(const char[] name);
 
 forward void pop_entity_spawned(IPopulator populator, IPopulationSpawner spawner, SpawnLocation location, int entity);
 
-native void set_upgrades_file(const char[] path);
+native void set_upgrades_file(const char[] path, bool use_crc=true);
 
 #if !defined REQUIRE_EXTENSIONS
 public void __ext_popspawner_SetNTVOptional()

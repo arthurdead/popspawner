@@ -3930,15 +3930,21 @@ cell_t add_populator(IPluginContext *pContext, const cell_t *params)
 
 static bool g_bInUpgradesParse{false};
 
-cell_t set_upgrades_file(IPluginContext *pContext, const cell_t *params)
+cell_t set_upgrades_file_internal(IPluginContext *pContext, const cell_t *params)
 {
 	char *path_ptr{nullptr};
 	pContext->LocalToString(params[1], &path_ptr);
 
-	FileHandle_t file = filesystem->Open(path_ptr, "r", "UPGRADES");
+	char *path_resolved_ptr{nullptr};
+	FileHandle_t file = filesystem->OpenEx(path_ptr, "r", 0, "UPGRADES", &path_resolved_ptr);
 	if(!file) {
 		return pContext->ThrowNativeError("could not open %s", path_ptr);
 	}
+
+	bool use_crc = params[4] != 0;
+
+	char new_path_relative[MAX_PATH]{'\0'};
+	char *new_path_relative_ptr{new_path_relative};
 
 	unsigned int size{filesystem->Size(file)};
 
@@ -3946,12 +3952,17 @@ cell_t set_upgrades_file(IPluginContext *pContext, const cell_t *params)
 
 	filesystem->Read(buf, size, file);
 
-	CRC32_t crc = CRC32_ProcessSingleBuffer(buf, size);
-
 	filesystem->Close(file);
 
-	char new_path_relative[MAX_PATH];
-	sprintf(new_path_relative, "scripts/items/mvm_upgrades_%lx.txt", crc);
+	if(use_crc) {
+		CRC32_t crc = CRC32_ProcessSingleBuffer(buf, size);
+		sprintf(new_path_relative, "scripts/items/mvm_upgrades_%lx.txt", crc);
+	} else {
+		const char *filename{V_UnqualifiedFileName(path_resolved_ptr)};
+		sprintf(new_path_relative, "scripts/items/%s", filename);
+	}
+
+	free(path_resolved_ptr);
 
 	char new_path_full[MAX_PATH];
 	smutils->BuildPath(Path_Game, new_path_full, MAX_PATH, "%s", new_path_relative);
@@ -3968,13 +3979,11 @@ cell_t set_upgrades_file(IPluginContext *pContext, const cell_t *params)
 
 	delete[] buf;
 
-	if(m_pDownloadableFileTable->FindStringIndex(new_path_relative) == INVALID_STRING_INDEX) {
+	if(m_pDownloadableFileTable->FindStringIndex(new_path_relative_ptr) == INVALID_STRING_INDEX) {
 		bool lock = engine->LockNetworkStringTables(true);
-		m_pDownloadableFileTable->AddString(true, new_path_relative);
+		m_pDownloadableFileTable->AddString(true, new_path_relative_ptr);
 		engine->LockNetworkStringTables(lock);
 	}
-
-	//TODO!!!!! sendfile to already connected clients
 
 	CBaseEntity *pEntity = gamehelpers->ReferenceToEntity(tf_gamerules_ref);
 	if(!pEntity) {
@@ -3982,13 +3991,16 @@ cell_t set_upgrades_file(IPluginContext *pContext, const cell_t *params)
 	}
 
 	variant_t value{};
-	value.SetString(MAKE_STRING(new_path_relative));
+	value.SetString(MAKE_STRING(new_path_relative_ptr));
 
 	g_bInUpgradesParse = true;
 	pEntity->AcceptInput("SetCustomUpgradesFile", nullptr, nullptr, value, -1);
 	g_bInUpgradesParse = false;
 
-	return 0;
+	size_t written{0};
+	pContext->StringToLocalUTF8(params[2], params[3], new_path_relative_ptr, &written);
+
+	return written;
 }
 
 sp_nativeinfo_t natives[] =
@@ -4074,7 +4086,7 @@ sp_nativeinfo_t natives[] =
 	{"init_pop", init_pop},
 	{"merge_pop", merge_pop},
 	{"add_populator", add_populator},
-	{"set_upgrades_file", set_upgrades_file},
+	{"set_upgrades_file_internal", set_upgrades_file_internal},
 	{NULL, NULL}
 };
 
