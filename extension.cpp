@@ -2288,6 +2288,8 @@ static int m_bMannVsMachineWaveClassActive2_offset{-1};
 static int m_nMannVsMachineWaveClassCounts_offset{-1};
 static int m_nMannVsMachineWaveClassCounts2_offset{-1};
 
+static int m_flMannVsMachineNextWaveTime_offset{-1};
+
 #define MVM_CLASS_TYPES_PER_WAVE_MAX 12
 
 void SetEdictStateChanged(CBaseEntity *pEntity, int offset)
@@ -2484,6 +2486,19 @@ public:
 				return;
 			}
 		}
+	}
+
+	void SetMannVsMachineNextWaveTime( float flTime )
+	{
+		if(m_flMannVsMachineNextWaveTime_offset == -1) {
+			datamap_t *map = gamehelpers->GetDataMap(this);
+			sm_datatable_info_t info{};
+			gamehelpers->FindDataMapInfo(map, "m_flMannVsMachineNextWaveTime", &info);
+			m_flMannVsMachineNextWaveTime_offset = info.actual_offset;
+		}
+
+		*(float *)(((unsigned char *)this) + m_flMannVsMachineNextWaveTime_offset) = flTime;
+		SetEdictStateChanged(this, m_flMannVsMachineNextWaveTime_offset);
 	}
 };
 
@@ -5181,6 +5196,26 @@ DETOUR_DECL_MEMBER0(StartCurrentWave, void)
 	}
 }
 
+DETOUR_DECL_MEMBER0(WaveCompleteUpdate, void)
+{
+	DETOUR_MEMBER_CALL(WaveCompleteUpdate)();
+
+	CWave *pThis{(CWave *)this};
+
+	if ( pThis->m_waitWhenDone > 0.0f )
+	{
+		if ( !pThis->m_doneTimer.HasStarted() )
+		{
+			pThis->m_doneTimer.Start( pThis->m_waitWhenDone );
+		}
+
+		CTFObjectiveResource *pObjectiveResource = (CTFObjectiveResource *)gamehelpers->ReferenceToEntity(objective_resource_ref);
+		if(pObjectiveResource) {
+			pObjectiveResource->SetMannVsMachineNextWaveTime( gpGlobals->curtime + pThis->m_waitWhenDone );
+		}
+	}
+}
+
 IGameConfig *g_pGameConf = nullptr;
 
 CDetour *pPopulationManagerParse{nullptr};
@@ -5189,6 +5224,7 @@ CDetour *pWaveParse{nullptr};
 CDetour *pFireEvent{nullptr};
 CDetour *pStartCurrentWave{nullptr};
 CDetour *pSpawnLocationParse{nullptr};
+CDetour *pWaveCompleteUpdate{nullptr};
 
 ISDKHooks *g_pSDKHooks = nullptr;
 
@@ -5272,6 +5308,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	pStartCurrentWave = DETOUR_CREATE_MEMBER(StartCurrentWave, "CPopulationManager::StartCurrentWave")
 	pStartCurrentWave->EnableDetour();
+
+	pWaveCompleteUpdate = DETOUR_CREATE_MEMBER(WaveCompleteUpdate, "CWave::WaveCompleteUpdate")
+	pWaveCompleteUpdate->EnableDetour();
 
 	g_pGameConf->GetMemSig("AllocPooledString", &AllocPooledStringPtr);
 

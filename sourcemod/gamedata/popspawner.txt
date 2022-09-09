@@ -163,6 +163,11 @@
 				"library" "server"
 				"linux" "@_ZN18CPopulationManager23UpdateObjectiveResourceEv"
 			}
+			"CWave::WaveCompleteUpdate"
+			{
+				"library" "server"
+				"linux" "@_ZN5CWave18WaveCompleteUpdateEv"
+			}
 			"g_pPopulationManager"
 			{
 				"library" "server"
