@@ -452,6 +452,7 @@ void *CBaseEntitySetAbsOrigin = nullptr;
 void *CBaseEntityCalcAbsolutePosition = nullptr;
 int m_vecAbsOriginOffset = -1;
 int m_iClassnameOffset = -1;
+int m_iTeamNumOffset = -1;
 
 class CBasePlayer;
 
@@ -866,6 +867,11 @@ public:
 		return call_vfunc<bool, CBaseEntity, const char *, CBaseEntity *, CBaseEntity *, variant_t, int>(this, CBaseEntityAcceptInput, szInputName, pActivator, pCaller, Value, outputID);
 	}
 
+	int GetTeamNumber()
+	{
+		return *(int *)(((unsigned char *)this) + m_iTeamNumOffset);
+	}
+
 	static CBaseEntity *CreateNoSpawn( const char *szName, const Vector &vecOrigin, const QAngle &vecAngles, CBaseEntity *pOwner = NULL )
 	{
 		CBaseEntity *pEntity{CreateEntityByName(szName)};
@@ -887,7 +893,6 @@ public:
 	virtual bool ShouldBlockNav() const { return true; }
 	int ObjectCaps() { return 0; }
 	bool HasSpawnFlags(int) { return 0; }
-	int GetTeamNumber() { return 0; }
 };
 
 inline bool FClassnameIs(CBaseEntity *pEntity, const char *szClassname)
@@ -1225,7 +1230,13 @@ public:
 
 int m_bDisabledOffset = -1;
 
-class CTFTeamSpawn : public CBaseEntity
+class ITFTeamSpawnAutoList
+{
+public:
+	virtual ~ITFTeamSpawnAutoList() = 0;
+};
+
+class CTFTeamSpawn : public CBaseEntity, public ITFTeamSpawnAutoList
 {
 public:
 	bool IsDisabled()
@@ -1241,7 +1252,7 @@ public:
 	}
 };
 
-static CUtlVector<CTFTeamSpawn *> *m_ITFTeamSpawnAutoListAutoList{nullptr};
+static CUtlVector<ITFTeamSpawnAutoList *> *m_ITFTeamSpawnAutoListAutoList{nullptr};
 
 IForward *spawnlocation_parse{nullptr};
 
@@ -1253,6 +1264,8 @@ CBaseEntity *FindEntityByClassname(CBaseEntity *pStart, const char *classname)
 {
 	return servertools->FindEntityByClassname(pStart, classname);
 }
+
+#define TF_TEAM_PVE_INVADERS 3
 
 bool CSpawnLocation::DetourParse( KeyValues *data )
 {
@@ -1298,6 +1311,35 @@ bool CSpawnLocation::DetourParse( KeyValues *data )
 			if ( !bFound )
 			{
 				Warning( "Invalid Where argument '%s'\n", value );
+			}
+
+			if(!bFound && strcmp(value, "spawnbot") != 0) {
+				spawnPoint = NULL;
+				while( ( spawnPoint = FindEntityByClassname( spawnPoint, "*" ) ) != NULL )
+				{
+					if ( FStrEq( STRING( spawnPoint->GetEntityName() ), "spawnbot" ) )
+					{
+						m_teamSpawnVector.AddToTail( (CTFTeamSpawn *)spawnPoint );
+						bFound = true;
+						break;
+					}
+				}
+			}
+
+			if(!bFound) {
+				spawnPoint = NULL;
+				while( ( spawnPoint = FindEntityByClassname( spawnPoint, "info_player_teamspawn" ) ) != NULL )
+				{
+					int team{spawnPoint->GetTeamNumber()};
+					if(team == TF_TEAM_PVE_INVADERS) {
+						m_teamSpawnVector.AddToTail( (CTFTeamSpawn *)spawnPoint );
+						bFound = true;
+					}
+				}
+			}
+
+			if ( !bFound )
+			{
 				return false;
 			}
 		}
@@ -5360,6 +5402,10 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	info_populator_size = dictionary->FindFactory("info_populator")->GetEntitySize();
 	mvm_logic_size = dictionary->FindFactory("tf_logic_mann_vs_machine")->GetEntitySize();
+
+	sm_sendprop_info_t info{};
+	gamehelpers->FindSendPropInfo("CBaseEntity", "m_iTeamNum", &info);
+	m_iTeamNumOffset = info.actual_offset;
 
 	popspawner_handle = handlesys->CreateType("popspawner", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
