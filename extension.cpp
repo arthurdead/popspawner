@@ -5157,7 +5157,6 @@ DETOUR_DECL_MEMBER0(PopulationManagerParse, bool)
 ConVar tf_mvm_bonus( "tf_mvm_bonus", "0" );
 ConVar tf_mvm_bonus_boss_classname( "tf_mvm_bonus_boss_classname", "eyeball_boss" );
 ConVar tf_mvm_bonus_spawnpoint_name( "tf_mvm_bonus_spawnpoint_name", "spawn_boss_startpoint" );
-ConVar tf_mvm_bonus_spawnpoint_classname( "tf_mvm_bonus_spawnpoint_classname", "info_target" );
 
 IForward *is_bonus_wave{nullptr};
 
@@ -5210,7 +5209,7 @@ DETOUR_DECL_MEMBER0(StartCurrentWave, void)
 			if(boss_pos.IsZero()) {
 				bool bFoundSpawnPoint = false;
 				CBaseEntity *spawnPoint = NULL;
-				while( ( spawnPoint = FindEntityByClassname( spawnPoint, tf_mvm_bonus_spawnpoint_classname.GetString() ) ) != NULL )
+				while( ( spawnPoint = FindEntityByClassname( spawnPoint, "*" ) ) != NULL )
 				{
 					if ( FStrEq( STRING( spawnPoint->GetEntityName() ), tf_mvm_bonus_spawnpoint_name.GetString() ) )
 					{
@@ -5220,7 +5219,7 @@ DETOUR_DECL_MEMBER0(StartCurrentWave, void)
 				}
 
 				if(!bFoundSpawnPoint) {
-					Warning( "CPopulationManager::StartCurrentWave trying to spawn a bonus boss, but cannot find %s %s in the map\n", tf_mvm_bonus_spawnpoint_name.GetString(), tf_mvm_bonus_spawnpoint_classname.GetString() );
+					Warning( "CPopulationManager::StartCurrentWave trying to spawn a bonus boss, but cannot find %s in the map\n", tf_mvm_bonus_spawnpoint_name.GetString() );
 					RemoveEntity( members.m_hBonusBoss );
 					members.m_hBonusBoss = NULL;
 					members.m_bBonusRound = false;
