@@ -367,3 +367,14 @@ public Extension __ext_popspawner =
 	required = 0,
 #endif
 };
+
+public SharedPlugin __pl_popspawner =
+{
+	name = "popspawner",
+	file = "popspawner.smx",
+#if defined REQUIRE_PLUGIN
+	required = 1,
+#else
+	required = 0,
+#endif
+};

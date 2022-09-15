@@ -45,19 +45,15 @@ static ConVar bz2_folder;
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int length)
 {
-	if(LibraryExists("system2") ||
-		GetExtensionFileStatus("system2.ext") == 1) {
-		system2_loaded = true;
-	}
-
-	if(LibraryExists("bzip2") ||
-		GetExtensionFileStatus("smbz2.ext") == 1) {
-		bzip2_loaded = true;
-	}
-
+	RegPluginLibrary("popspawner");
 	CreateNative("set_upgrades_file", native_set_upgrades_file);
-
 	return APLRes_Success;
+}
+
+public void OnAllPluginsLoaded()
+{
+	system2_loaded = LibraryExists("system2");
+	bzip2_loaded = LibraryExists("bzip2");
 }
 
 #if defined _system2_included
