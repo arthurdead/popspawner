@@ -43,6 +43,10 @@ CopyFiles('sourcemod/gamedata', 'addons/sourcemod/gamedata',
   [ 'popspawner.txt']
 )
 
+CopyFiles('sourcemod/extensions', 'addons/sourcemod/extensions',
+  [ 'popspawner.autoload']
+)
+
 # Config Files
 #CopyFiles('configs', 'addons/sourcemod/configs',
 #  [ 'configfile.cfg',
