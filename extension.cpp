@@ -2240,45 +2240,37 @@ void Sample::OnCoreMapEnd()
 void Sample::OnEntityCreated(CBaseEntity *pEntity, const char *classname)
 {
 	if(strcmp(classname, "info_populator") == 0) {
-		CPopulationManager *pPopulator{(CPopulationManager *)gamehelpers->ReferenceToEntity(populator_ref)};
-		if(pPopulator) {
-			RemoveEntity(pEntity);
-		} else {
-			populator_ref = gamehelpers->EntityToReference(pEntity);
-			pPopulator = (CPopulationManager *)pEntity;
-		}
+		populator_ref = gamehelpers->EntityToReference(pEntity);
 
-		*g_pPopulationManagerPtr = pPopulator;
+		*g_pPopulationManagerPtr = (CPopulationManager *)pEntity;
 
 		CMannVsMachineLogic *pLogic{(CMannVsMachineLogic *)gamehelpers->ReferenceToEntity(mvm_logic_ref)};
 		if(pLogic) {
-			pLogic->GetMembers().m_populationManager = pPopulator;
+			pLogic->GetMembers().m_populationManager = (CPopulationManager *)pEntity;
+		}
+
+		CMannVsMachineStats *pStats{(CMannVsMachineStats *)gamehelpers->ReferenceToEntity(mvm_stats_ref)};
+		if(pStats) {
+			((CPopulationManager *)pEntity)->GetMembers().m_pMVMStats = pStats;
 		}
 	} else if(strcmp(classname, "tf_mann_vs_machine_stats") == 0) {
-		CBaseEntity *pStats{gamehelpers->ReferenceToEntity(mvm_stats_ref)};
-		if(pStats) {
-			RemoveEntity(pEntity);
-		} else {
-			mvm_stats_ref = gamehelpers->EntityToReference(pEntity);
-			pStats = pEntity;
-		}
+		mvm_stats_ref = gamehelpers->EntityToReference(pEntity);
 
-		*g_pMVMStatsPtr = pStats;
+		*g_pMVMStatsPtr = pEntity;
 
 		CPopulationManager *pPopulator{(CPopulationManager *)gamehelpers->ReferenceToEntity(populator_ref)};
 		if(pPopulator) {
-			pPopulator->GetMembers().m_pMVMStats = (CMannVsMachineStats *)pStats;
+			pPopulator->GetMembers().m_pMVMStats = (CMannVsMachineStats *)pEntity;
 		}
 	} else if(strcmp(classname, "tf_logic_mann_vs_machine") == 0) {
-		CMannVsMachineLogic *pLogic{(CMannVsMachineLogic *)gamehelpers->ReferenceToEntity(mvm_logic_ref)};
-		if(pLogic) {
-			RemoveEntity(pEntity);
-		} else {
-			mvm_logic_ref = gamehelpers->EntityToReference(pEntity);
-			pLogic = (CMannVsMachineLogic *)pEntity;
-		}
+		mvm_logic_ref = gamehelpers->EntityToReference(pEntity);
 
-		*g_hMannVsMachineLogic = pLogic;
+		*g_hMannVsMachineLogic = (CMannVsMachineLogic *)pEntity;
+
+		CPopulationManager *pPopulator{(CPopulationManager *)gamehelpers->ReferenceToEntity(populator_ref)};
+		if(pPopulator) {
+			((CMannVsMachineLogic *)pEntity)->GetMembers().m_populationManager = pPopulator;
+		}
 	} else if(strcmp(classname, "tf_objective_resource") == 0) {
 		objective_resource_ref = gamehelpers->EntityToReference(pEntity);
 	} else if(strcmp(classname, "tf_gamerules") == 0) {
@@ -5091,12 +5083,14 @@ bool CPopulationManager::ParseAdditive( KeyValues *values )
 	return true;
 }
 
+bool KeyValuesLoadDetour(KeyValues *pThis, IBaseFileSystem *filesystem, const char *resourceName, const char *pathID, bool refreshCache);
+
 bool CPopulationManager::ParseAdditive( const char *populationFile )
 {
 	CPopulationManager_members_t &members{GetMembers()};
 
 	KeyValues::AutoDelete values{ new KeyValues( "Population" ) };
-	if ( !values->LoadFromFile( filesystem, populationFile, "POPULATION" ) )
+	if ( !KeyValuesLoadDetour(values, filesystem, populationFile, "POPULATION", false ) )
 	{
 		Warning( "Can't open %s.\n", populationFile );
 		return false;
@@ -5139,14 +5133,28 @@ DETOUR_DECL_MEMBER1(WaveParse, bool, KeyValues *, values)
 	return ((CWave *)this)->CWave::DetourParse(values);
 }
 
+#define DETOUR_MEMBER_CALL_PTR(ptr, name) (((name##Class *)ptr)->*name##Class::name##_Actual)
+
 DETOUR_DECL_MEMBER4(KeyValuesLoadFromFile, bool, IBaseFileSystem *,filesystem, const char *,resourceName, const char *,pathID, bool, refreshCache)
+{
+	return KeyValuesLoadDetour((KeyValues *)this, filesystem, resourceName, pathID, refreshCache);
+}
+
+bool KeyValuesLoadDetour(KeyValues *pThis, IBaseFileSystem *filesystem, const char *resourceName, const char *pathID, bool refreshCache)
 {
 	if(g_bInUpgradesParse) {
 		pathID = "UPGRADES";
 	} else if(g_bInPopParse) {
 		pathID = "POPULATION";
 	}
-	return DETOUR_MEMBER_CALL(KeyValuesLoadFromFile)(filesystem, resourceName, pathID, refreshCache);
+	bool ret{DETOUR_MEMBER_CALL_PTR(pThis, KeyValuesLoadFromFile)(filesystem, resourceName, pathID, refreshCache)};
+	if(!ret) {
+		if(g_bInUpgradesParse || g_bInPopParse) {
+			pathID = "custom_mod";
+			ret = DETOUR_MEMBER_CALL_PTR(pThis, KeyValuesLoadFromFile)(filesystem, resourceName, pathID, refreshCache);
+		}
+	}
+	return ret;
 }
 
 DETOUR_DECL_MEMBER0(PopulationManagerParse, bool)
@@ -5301,22 +5309,26 @@ void Sample::NotifyInterfaceDrop(SMInterface *pInterface)
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
 	char pPath[MAX_PATH];
-	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/population");
-	filesystem->AddSearchPath( pPath, "POPULATION" );
 	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/population");
 	filesystem->AddSearchPath( pPath, "POPULATION" );
 	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/population");
 	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/population");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
 	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
 	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "tf2_misc_dir.vpk");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
 
-	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/items");
-	filesystem->AddSearchPath( pPath, "UPGRADES" );
 	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/upgrades");
 	filesystem->AddSearchPath( pPath, "UPGRADES" );
 	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/upgrades");
 	filesystem->AddSearchPath( pPath, "UPGRADES" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/items");
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
 	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "tf2_misc_dir.vpk");
 	filesystem->AddSearchPath( pPath, "UPGRADES" );
 
 	gameconfs->LoadGameConfigFile("popspawner", &g_pGameConf, error, maxlen);
