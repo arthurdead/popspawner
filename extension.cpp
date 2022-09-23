@@ -482,13 +482,23 @@ public:
 		return gamehelpers->EntityToBCompatRef(this);
 	}
 
-	CBasePlayer *IsPlayer()
+	CBasePlayer *GetPlayer()
 	{
 		int idx = gamehelpers->EntityToBCompatRef(this);
-		if(idx >= 1 && idx <= playerhelpers->GetNumPlayers()) {
+		if(idx >= 1 && idx <= playerhelpers->GetMaxClients()) {
 			return (CBasePlayer *)this;
 		} else {
 			return nullptr;
+		}
+	}
+
+	bool IsPlayer()
+	{
+		int idx = gamehelpers->EntityToBCompatRef(this);
+		if(idx >= 1 && idx <= playerhelpers->GetMaxClients()) {
+			return true;
+		} else {
+			return false;
 		}
 	}
 
