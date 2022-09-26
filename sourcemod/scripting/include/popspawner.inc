@@ -343,6 +343,8 @@ forward void pop_entity_spawned(IPopulator populator, IPopulationSpawner spawner
 
 native void set_upgrades_file(const char[] path, bool use_crc=true);
 
+native bool claim_currency_pack(int client, int pack, float timeout = 1.0);
+
 #if !defined REQUIRE_EXTENSIONS
 public void __ext_popspawner_SetNTVOptional()
 {

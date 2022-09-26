@@ -2571,9 +2571,29 @@ public:
 	}
 };
 
-int m_nAmountOffset = -1;
+int m_CurrencyPacksOffset = -1;
 
-class CCurrencyPackCustom : public CTFPowerup
+class CCurrencyPack;
+
+class CTFPlayer : public CBaseEntity
+{
+public:
+	struct pulledcurrencypacks_t
+	{
+		CHandle<CCurrencyPack> hPack;
+		float flTime;
+	};
+
+	CUtlVector <pulledcurrencypacks_t> &CurrencyPacks()
+	{
+		return *(CUtlVector <pulledcurrencypacks_t> *)(((unsigned char *)this) + m_CurrencyPacksOffset);
+	}
+};
+
+int m_nAmountOffset = -1;
+int m_bClaimedOffset = -1;
+
+class CCurrencyPack: public CTFPowerup
 {
 public:
 	void SetAmount( float flAmount )
@@ -2587,6 +2607,22 @@ public:
 
 		*(int *)(((unsigned char *)this) + m_nAmountOffset) = flAmount;
 	}
+
+	bool IsClaimed()
+	{
+		return *(bool *)(((unsigned char *)this) + m_bClaimedOffset);
+	}
+
+	void SetClaimed()
+	{
+		*(bool *)(((unsigned char *)this) + m_bClaimedOffset) = true;
+	}
+};
+
+class CCurrencyPackCustom : public CCurrencyPack
+{
+public:
+	
 };
 
 static void pop_remove_entity(CBaseEntity *pEntity, entpopdata_t &data)
@@ -4062,6 +4098,50 @@ cell_t set_upgrades_file_internal(IPluginContext *pContext, const cell_t *params
 	return written;
 }
 
+cell_t claim_currency_pack(IPluginContext *pContext, const cell_t *params)
+{
+	int client = params[1];
+
+	IGamePlayer *pGamePlayer = playerhelpers->GetGamePlayer(client);
+	if (!pGamePlayer) {
+		return pContext->ThrowNativeError("Client index %d is invalid", client);
+	} else if (!pGamePlayer->IsInGame()) {
+		return pContext->ThrowNativeError("Client %d is not in game", client);
+	}
+
+	CTFPlayer *pPlayer = (CTFPlayer *)gamehelpers->ReferenceToEntity(gamehelpers->IndexOfEdict(pGamePlayer->GetEdict()));
+
+	CCurrencyPack *pCurrencyPack = (CCurrencyPack *)gamehelpers->ReferenceToEntity(params[2]);
+	if(!pCurrencyPack) {
+		return pContext->ThrowNativeError("Invalid Entity Reference/Index %i", params[2]);
+	}
+
+	if ( pCurrencyPack->IsClaimed() ) {
+		return 0;
+	}
+
+	bool bFound = false;
+	FOR_EACH_VEC( pPlayer->CurrencyPacks(), i )
+	{
+		CTFPlayer::pulledcurrencypacks_t packinfo = pPlayer->CurrencyPacks()[i];
+		if ( packinfo.hPack == pCurrencyPack ) {
+			bFound = true;
+		}
+	}
+
+	if ( !bFound )
+	{
+		// Mark as claimed to prevent other players from grabbing
+		pCurrencyPack->SetClaimed();
+		CTFPlayer::pulledcurrencypacks_t packinfo;
+		packinfo.hPack = pCurrencyPack;
+		packinfo.flTime = gpGlobals->curtime + sp_ctof(params[3]);
+		pPlayer->CurrencyPacks().AddToTail( packinfo );
+	}
+
+	return 1;
+}
+
 sp_nativeinfo_t natives[] =
 {
 	{"CustomPopulationSpawner.set_data", set_data},
@@ -4146,6 +4226,7 @@ sp_nativeinfo_t natives[] =
 	{"merge_pop", merge_pop},
 	{"add_populator", add_populator},
 	{"set_upgrades_file_internal", set_upgrades_file_internal},
+	{"claim_currency_pack", claim_currency_pack},
 	{NULL, NULL}
 };
 
@@ -5316,6 +5397,26 @@ void Sample::NotifyInterfaceDrop(SMInterface *pInterface)
 	}
 }
 
+class CTFDamageEvent
+{
+#ifdef CLIENT_DLL
+	// This redundantly declares friendship which leads to gcc warnings.
+	//DECLARE_CLIENTCLASS_NOBASE();
+#else
+public:
+	// This redundantly declares friendship which leads to gcc warnings.
+	//DECLARE_SERVERCLASS_NOBASE();
+#endif
+	DECLARE_EMBEDDED_NETWORKVAR();
+
+public:
+	float	flDamage;
+	float	flDamageCritScaleMultiplier;		// scale the damage by this amount when taking it into consideration for "should I crit?" calculations
+	float	flTime;
+	int		nDamageType;
+	byte	nKills;
+};
+
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
 	char pPath[MAX_PATH];
@@ -5427,6 +5528,25 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	sm_sendprop_info_t info{};
 	gamehelpers->FindSendPropInfo("CBaseEntity", "m_iTeamNum", &info);
 	m_iTeamNumOffset = info.actual_offset;
+
+	gamehelpers->FindSendPropInfo("CCurrencyPack", "m_bDistributed", &info);
+	m_bClaimedOffset = info.actual_offset-1;
+
+	gamehelpers->FindSendPropInfo("CTFPlayer", "m_flSpyTranqBuffDuration", &info);
+	m_CurrencyPacksOffset = info.actual_offset + sizeof(float);
+	{
+		using offset_pad_t = struct {
+			float	m_flNextCritUpdate;
+			CUtlVector<CTFDamageEvent> m_DamageEvents;
+
+			CHandle<CTFPlayer>	m_hPeeAttacker;
+
+			float m_flRadiusCurrencyCollectionTime;
+			float m_flRadiusSpyScanTime;
+		};
+
+		m_CurrencyPacksOffset += sizeof(offset_pad_t);
+	}
 
 	popspawner_handle = handlesys->CreateType("popspawner", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
