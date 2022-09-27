@@ -168,6 +168,11 @@
 				"library" "server"
 				"linux" "@_ZN5CWave18WaveCompleteUpdateEv"
 			}
+			"CPopulationManager::AllocateBots"
+			{
+				"library" "server"
+				"linux" "@_ZN18CPopulationManager12AllocateBotsEv"
+			}
 			"g_pPopulationManager"
 			{
 				"library" "server"

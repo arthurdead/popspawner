@@ -4275,8 +4275,9 @@ SpawnLocationResult CSpawnLocation::DetourFindSpawnLocation( Vector& vSpawnPosit
 	for ( int i=0; i<m_teamSpawnVector.Count(); ++i )
 	{
 		if(strcmp(m_teamSpawnVector[i]->GetClassname(), "info_player_teamspawn") == 0) {
-			if ( m_teamSpawnVector[i]->IsDisabled() )
+			if ( m_teamSpawnVector[i]->IsDisabled() ) {
 				continue;
+			}
 		}
 
 		activeSpawn.AddToTail( m_teamSpawnVector[i] );
@@ -5190,6 +5191,8 @@ bool CPopulationManager::ParseAdditive( const char *populationFile )
 	return ParseAdditive(values);
 }
 
+IForward *pop_pre_parse{nullptr};
+
 bool CPopulationManager::DetourParse( void )
 {
 	scope_manager_vars_t scope_vars{this};
@@ -5205,6 +5208,10 @@ bool CPopulationManager::DetourParse( void )
 	{
 		members.m_pTemplates->deleteThis();
 		members.m_pTemplates = NULL;
+	}
+
+	if(pop_pre_parse->GetFunctionCount() > 0) {
+		pop_pre_parse->Execute(nullptr);
 	}
 
 	if ( members.m_popfileFull[ 0 ] == '\0' )
@@ -5336,6 +5343,25 @@ DETOUR_DECL_MEMBER0(StartCurrentWave, void)
 	}
 }
 
+ConVar tf_mvm_preallocate_bots{"tf_mvm_preallocate_bots", "1"};
+
+DETOUR_DECL_MEMBER0(AllocateBots, void)
+{
+	if(tf_mvm_preallocate_bots.GetBool()) {
+		DETOUR_MEMBER_CALL(AllocateBots)();
+	} else {
+		CPopulationManager *pThis{(CPopulationManager *)this};
+
+		CPopulationManager_members_t &members{pThis->GetMembers()};
+
+		if(members.m_bAllocatedBots) {
+			return;
+		}
+
+		members.m_bAllocatedBots = true;
+	}
+}
+
 DETOUR_DECL_MEMBER0(WaveCompleteUpdate, void)
 {
 	DETOUR_MEMBER_CALL(WaveCompleteUpdate)();
@@ -5363,6 +5389,7 @@ CDetour *pKeyValuesLoadFromFile{nullptr};
 CDetour *pWaveParse{nullptr};
 CDetour *pFireEvent{nullptr};
 CDetour *pStartCurrentWave{nullptr};
+CDetour *pAllocateBots{nullptr};
 CDetour *pSpawnLocationParse{nullptr};
 CDetour *pWaveCompleteUpdate{nullptr};
 
@@ -5473,6 +5500,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	pStartCurrentWave = DETOUR_CREATE_MEMBER(StartCurrentWave, "CPopulationManager::StartCurrentWave")
 	pStartCurrentWave->EnableDetour();
 
+	pAllocateBots = DETOUR_CREATE_MEMBER(AllocateBots, "CPopulationManager::AllocateBots")
+	pAllocateBots->EnableDetour();
+
 	pWaveCompleteUpdate = DETOUR_CREATE_MEMBER(WaveCompleteUpdate, "CWave::WaveCompleteUpdate")
 	pWaveCompleteUpdate->EnableDetour();
 
@@ -5550,9 +5580,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	popspawner_handle = handlesys->CreateType("popspawner", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
-	find_spawn_location = forwards->CreateForward("find_spawn_location", ET_Hook, 1, nullptr, Param_Array);
+	find_spawn_location = forwards->CreateForward("find_spawn_location", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_Array);
 	pop_parse = forwards->CreateForward("pop_parse", ET_Hook, 2, nullptr, Param_Cell, Param_CellByRef);
-	wavespawn_parse = forwards->CreateForward("wavespawn_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
+	wavespawn_parse = forwards->CreateForward("wavespawn_parse", ET_Hook, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_CellByRef);
 	wave_parse = forwards->CreateForward("wave_parse", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_CellByRef);
 	spawnlocation_parse = forwards->CreateForward("spawnlocation_parse", ET_Hook, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_CellByRef);
 	spawner_parse = forwards->CreateForward("spawner_parse", ET_Hook, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_CellByRef);
@@ -5560,6 +5590,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	is_bonus_wave = forwards->CreateForward("is_bonus_wave", ET_Hook, 3, nullptr, Param_CellByRef, Param_CellByRef, Param_Array);
 	pop_entity_spawned = forwards->CreateForward("pop_entity_spawned", ET_Ignore, 4, nullptr, Param_Cell, Param_Cell, Param_Cell, Param_Cell);
 	replace_spawner = forwards->CreateForward("replace_spawner", ET_Hook, 2, nullptr, Param_String, Param_Cell);
+	pop_pre_parse = forwards->CreateForward("pop_pre_parse", ET_Ignore, 0, nullptr);
 
 	sharesys->AddNatives(myself, natives);
 	
@@ -5582,6 +5613,7 @@ void Sample::SDK_OnUnload()
 	pKeyValuesLoadFromFile->Destroy();
 	pWaveParse->Destroy();
 	pStartCurrentWave->Destroy();
+	pAllocateBots->Destroy();
 	gameconfs->CloseGameConfigFile(g_pGameConf);
 	forwards->ReleaseForward(find_spawn_location);
 	forwards->ReleaseForward(pop_parse);
@@ -5593,5 +5625,6 @@ void Sample::SDK_OnUnload()
 	forwards->ReleaseForward(pop_entity_spawned);
 	forwards->ReleaseForward(spawner_parse);
 	forwards->ReleaseForward(replace_spawner);
+	forwards->ReleaseForward(pop_pre_parse);
 	handlesys->RemoveType(popspawner_handle, myself->GetIdentity());
 }

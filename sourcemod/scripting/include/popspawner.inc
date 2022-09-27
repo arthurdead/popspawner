@@ -329,6 +329,7 @@ native bool add_populator(IPopulator populator);
 
 forward Action replace_spawner(char[] name, int len);
 
+forward void pop_pre_parse();
 forward Action pop_parse(KeyValues data, bool &result);
 forward Action wavespawn_parse(CWave wave, CWaveSpawnPopulator populator, KeyValues data, bool &result);
 forward Action wave_parse(CWave populator, KeyValues data, bool &result);
