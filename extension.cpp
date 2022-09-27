@@ -1126,9 +1126,22 @@ public:
 	void AddPopulator(IPopulator *populator);
 };
 
+static int populator_ref = INVALID_EHANDLE_INDEX;
+
 CPopulationManager *GetPopulationManager()
 {
-	return last_manager ? last_manager : ((CPopulationManager *)(*g_pPopulationManagerPtr));
+	if(last_manager) {
+		return last_manager;
+	}
+
+	if(populator_ref != INVALID_EHANDLE_INDEX) {
+		CPopulationManager *PopulationManager{(CPopulationManager *)gamehelpers->ReferenceToEntity(populator_ref)};
+		if(PopulationManager) {
+			return PopulationManager;
+		}
+	}
+
+	return ((CPopulationManager *)(*g_pPopulationManagerPtr));
 }
 
 class IPopulator
@@ -1421,13 +1434,7 @@ public:
 		return bytes;
 	}
 
-	void dtor()
-	{
-		CWaveSpawnPopulator *bytes = META_IFACEPTR(CWaveSpawnPopulator);
-		SH_REMOVE_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(this, &CWaveSpawnPopulator::dtor), false);
-		SH_REMOVE_HOOK(IPopulator, HasEventChangeAttributes, bytes, SH_MEMBER(this, &CWaveSpawnPopulator::HookHasEventChangeAttributes), false);
-		RETURN_META(MRES_HANDLED);
-	}
+	void dtor();
 
 	bool HookHasEventChangeAttributes( const char* pszEventName ) const
 	{
@@ -2192,7 +2199,6 @@ SH_DECL_MANUALHOOK1_void(Event_Killed, 0, 0, 0, const CTakeDamageInfo &)
 static int objective_resource_ref = INVALID_EHANDLE_INDEX;
 static int mvm_stats_ref = INVALID_EHANDLE_INDEX;
 static int mvm_logic_ref = INVALID_EHANDLE_INDEX;
-static int populator_ref = INVALID_EHANDLE_INDEX;
 
 void **g_pMVMStatsPtr{nullptr};
 
@@ -2288,6 +2294,18 @@ void Sample::OnEntityCreated(CBaseEntity *pEntity, const char *classname)
 	}
 }
 
+struct entpopdata_t
+{
+	bool removed{false};
+	string_t icon{NULL_STRING};
+	int flags{MVM_CLASS_FLAG_NONE};
+	size_t m_currencyValue{TF_BASE_BOSS_CURRENCY};
+	IPopulationSpawner *m_spawner{nullptr};
+	CWaveSpawnPopulator *m_pWaveSpawnPopulator{nullptr};
+};
+
+static std::unordered_map<int, entpopdata_t> entpopdata{};
+
 void Sample::OnEntityDestroyed(CBaseEntity *pEntity)
 {
 	if(!pEntity) {
@@ -2303,6 +2321,15 @@ void Sample::OnEntityDestroyed(CBaseEntity *pEntity)
 		if(pLogic) {
 			pLogic->GetMembers().m_populationManager = nullptr;
 		}
+
+		populator_ref = INVALID_EHANDLE_INDEX;
+
+		for(auto &it : entpopdata) {
+			entpopdata_t &data{it.second};
+
+			data.m_pWaveSpawnPopulator = nullptr;
+			data.m_spawner = nullptr;
+		}
 	} else if(strcmp(classname, "tf_mann_vs_machine_stats") == 0) {
 		*g_pMVMStatsPtr = nullptr;
 
@@ -2310,6 +2337,8 @@ void Sample::OnEntityDestroyed(CBaseEntity *pEntity)
 		if(pPopulator) {
 			pPopulator->GetMembers().m_pMVMStats = nullptr;
 		}
+
+		mvm_stats_ref = INVALID_EHANDLE_INDEX;
 	} else if(strcmp(classname, "tf_logic_mann_vs_machine") == 0) {
 		*g_hMannVsMachineLogic = nullptr;
 		mvm_logic_ref = INVALID_EHANDLE_INDEX;
@@ -2546,18 +2575,6 @@ public:
 	}
 };
 
-struct entpopdata_t
-{
-	bool removed{false};
-	string_t icon{NULL_STRING};
-	int flags{MVM_CLASS_FLAG_NONE};
-	size_t m_currencyValue{TF_BASE_BOSS_CURRENCY};
-	IPopulationSpawner *m_spawner{nullptr};
-	CWaveSpawnPopulator *m_pWaveSpawnPopulator{nullptr};
-};
-
-static std::unordered_map<int, entpopdata_t> entpopdata{};
-
 class CBaseCombatCharacter;
 
 void *CTFPowerupDropSingleInstance{nullptr};
@@ -2634,7 +2651,19 @@ static void pop_remove_entity(CBaseEntity *pEntity, entpopdata_t &data)
 			pObjectiveResource->DecrementMannVsMachineWaveClassCount(data.icon, data.flags);
 		}
 
-		CPopulationManager *PopulationManager = data.m_spawner->GetPopulator()->GetManager();
+		CPopulationManager *PopulationManager{nullptr};
+		if(data.m_spawner) {
+			IPopulator *populator{data.m_spawner->GetPopulator()};
+			if(populator) {
+				PopulationManager = populator->GetManager();
+			}
+		}
+		if(!PopulationManager && data.m_pWaveSpawnPopulator) {
+			PopulationManager = data.m_pWaveSpawnPopulator->GetManager();
+		}
+		if(!PopulationManager) {
+			PopulationManager = GetPopulationManager();
+		}
 		if(PopulationManager) {
 			PopulationManager->OnPlayerKilled((CTFPlayer *)pEntity);
 		}
@@ -2925,9 +2954,35 @@ static bool hook_spawner_parse(KeyValues *data)
 	RETURN_META_VALUE(MRES_HANDLED, true);
 }
 
+void CWaveSpawnPopulator::dtor()
+{
+	CWaveSpawnPopulator *bytes = META_IFACEPTR(CWaveSpawnPopulator);
+
+	for(auto &it : entpopdata) {
+		entpopdata_t &data{it.second};
+
+		if(data.m_pWaveSpawnPopulator == bytes) {
+			data.m_pWaveSpawnPopulator = nullptr;
+		}
+	}
+
+	SH_REMOVE_MANUALHOOK(GenericDtor, bytes, SH_MEMBER(this, &CWaveSpawnPopulator::dtor), false);
+	SH_REMOVE_HOOK(IPopulator, HasEventChangeAttributes, bytes, SH_MEMBER(this, &CWaveSpawnPopulator::HookHasEventChangeAttributes), false);
+
+	RETURN_META(MRES_HANDLED);
+}
+
 static void hook_spawner_dtor()
 {
 	IPopulationSpawner *spawner = META_IFACEPTR(IPopulationSpawner);
+
+	for(auto &it : entpopdata) {
+		entpopdata_t &data{it.second};
+
+		if(data.m_spawner == spawner) {
+			data.m_spawner = nullptr;
+		}
+	}
 
 	SH_REMOVE_HOOK(IPopulationSpawner, Spawn, spawner, SH_STATIC(hook_spawner_spawn), true);
 	SH_REMOVE_HOOK(IPopulationSpawner, Parse, spawner, SH_STATIC(hook_spawner_parse), true);
