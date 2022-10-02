@@ -1,6 +1,15 @@
 #include <sourcemod>
 #include <popspawner>
 
+public Plugin myinfo = 
+{
+	name = "popspawner",
+	author = "Arthurdead",
+	description = "",
+	version = "0.1.0.4",
+	url = ""
+};
+
 native int set_upgrades_file_internal(const char[] path, char[] new_path, int len, bool use_crc);
 
 #undef REQUIRE_EXTENSIONS
