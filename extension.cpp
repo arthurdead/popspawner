@@ -2229,9 +2229,17 @@ static int tf_gamerules_ref{INVALID_EHANDLE_INDEX};
 INetworkStringTableContainer *netstringtables = NULL;
 INetworkStringTable *m_pDownloadableFileTable = nullptr;
 
+#include <ISDKTools.h>
+
+ISDKTools *g_pSDKTools{nullptr};
+
+class CGameRules *g_pGameRules{nullptr};
+
 void Sample::OnCoreMapStart(edict_t *pEdictList, int edictCount, int clientMax)
 {
 	m_pDownloadableFileTable = netstringtables->FindTable(DOWNLOADABLE_FILE_TABLENAME);
+
+	g_pGameRules = (CGameRules *)g_pSDKTools->GetGameRules();
 
 	CBaseEntity *pEntity = FindEntityByClassname(nullptr, "tf_objective_resource");
 	if(pEntity) {
@@ -4080,6 +4088,32 @@ cell_t add_populator(IPluginContext *pContext, const cell_t *params)
 
 static bool g_bInUpgradesParse{false};
 
+void *CMannVsMachineUpgradeManagerLoadUpgradesFileFromPath{nullptr};
+
+class CMannVsMachineUpgradeManager
+{
+public:
+	void LoadUpgradesFileFromPath( const char *pszPath )
+	{
+		call_mfunc<void, CMannVsMachineUpgradeManager, const char *>(this, CMannVsMachineUpgradeManagerLoadUpgradesFileFromPath, pszPath);
+	}
+};
+
+CMannVsMachineUpgradeManager *g_MannVsMachineUpgrades{nullptr};
+
+int m_pszCustomUpgradesFileOffset{-1};
+
+class CTFGameRules
+{
+public:
+	void SetCustomUpgradesFilePath(const char *pszPath)
+	{
+		V_strncpy( (char *)(((unsigned char *)this) + m_pszCustomUpgradesFileOffset), pszPath, MAX_PATH );
+	}
+};
+
+#include <igameevents.h>
+
 cell_t set_upgrades_file_internal(IPluginContext *pContext, const cell_t *params)
 {
 	char *path_ptr{nullptr};
@@ -4094,7 +4128,6 @@ cell_t set_upgrades_file_internal(IPluginContext *pContext, const cell_t *params
 	bool use_crc = params[4] != 0;
 
 	char new_path_relative[MAX_PATH]{'\0'};
-	char *new_path_relative_ptr{new_path_relative};
 
 	unsigned int size{filesystem->Size(file)};
 
@@ -4127,28 +4160,42 @@ cell_t set_upgrades_file_internal(IPluginContext *pContext, const cell_t *params
 
 	filesystem->Close(file);
 
+	char new_path_relative_cl[MAX_PATH]{'\0'};
+	sprintf(new_path_relative_cl, "download/%s", new_path_relative);
+
+	smutils->BuildPath(Path_Game, new_path_full, MAX_PATH, "%s", new_path_relative_cl);
+
+	file = filesystem->Open(new_path_full, "w+", "MOD");
+	if(file) {
+		filesystem->Write(buf, size, file);
+
+		filesystem->Close(file);
+	}
+
 	delete[] buf;
 
-	if(m_pDownloadableFileTable->FindStringIndex(new_path_relative_ptr) == INVALID_STRING_INDEX) {
+	if(m_pDownloadableFileTable->FindStringIndex(new_path_relative) == INVALID_STRING_INDEX) {
 		bool lock = engine->LockNetworkStringTables(true);
-		m_pDownloadableFileTable->AddString(true, new_path_relative_ptr);
+		m_pDownloadableFileTable->AddString(true, new_path_relative);
 		engine->LockNetworkStringTables(lock);
 	}
 
-	CBaseEntity *pEntity = gamehelpers->ReferenceToEntity(tf_gamerules_ref);
-	if(!pEntity) {
-		return pContext->ThrowNativeError("gamerules entity not found");
-	}
-
-	variant_t value{};
-	value.SetString(MAKE_STRING(new_path_relative_ptr));
-
 	g_bInUpgradesParse = true;
-	pEntity->AcceptInput("SetCustomUpgradesFile", nullptr, nullptr, value, -1);
+	g_MannVsMachineUpgrades->LoadUpgradesFileFromPath(new_path_relative);
 	g_bInUpgradesParse = false;
 
+	((CTFGameRules *)g_pGameRules)->SetCustomUpgradesFilePath( new_path_relative_cl );
+
+	// Tell connected clients to reload
+	IGameEvent *pEvent = gameeventmanager->CreateEvent( "upgrades_file_changed" );
+	if ( pEvent )
+	{
+		pEvent->SetString( "path", new_path_relative_cl );
+		gameeventmanager->FireEvent( pEvent );
+	}
+
 	size_t written{0};
-	pContext->StringToLocalUTF8(params[2], params[3], new_path_relative_ptr, &written);
+	pContext->StringToLocalUTF8(params[2], params[3], new_path_relative, &written);
 
 	return written;
 }
@@ -4409,6 +4456,8 @@ bool Sample::RegisterConCommandBase(ConCommandBase *pCommand)
 ConVar *tf_mvm_respec_limit{nullptr};
 ConVar *tf_mvm_respec_credit_goal{nullptr};
 
+IGameEventManager2 *gameeventmanager{nullptr};
+
 bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool late)
 {
 	gpGlobals = ismm->GetCGlobals();
@@ -4416,8 +4465,11 @@ bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool l
 	GET_V_IFACE_CURRENT(GetServerFactory, servertools, IServerTools, VSERVERTOOLS_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetEngineFactory, filesystem, IFileSystem, FILESYSTEM_INTERFACE_VERSION)
 	GET_V_IFACE_ANY(GetEngineFactory, netstringtables, INetworkStringTableContainer, INTERFACENAME_NETWORKSTRINGTABLESERVER)
+	GET_V_IFACE_CURRENT(GetEngineFactory, gameeventmanager, IGameEventManager2, INTERFACEVERSION_GAMEEVENTSMANAGER2)
 	g_pCVar = icvar;
 	ConVar_Register(0, this);
+
+	filesystem->CreateDirHierarchy("download/scripts/items", "MOD");
 
 	m_pDownloadableFileTable = netstringtables->FindTable(DOWNLOADABLE_FILE_TABLENAME);
 
@@ -5452,6 +5504,7 @@ ISDKHooks *g_pSDKHooks = nullptr;
 
 void Sample::SDK_OnAllLoaded()
 {
+	SM_GET_LATE_IFACE(SDKTOOLS, g_pSDKTools);
 	SM_GET_LATE_IFACE(SDKHOOKS, g_pSDKHooks);
 
 	g_pSDKHooks->AddEntityListener(this);
@@ -5460,12 +5513,15 @@ void Sample::SDK_OnAllLoaded()
 bool Sample::QueryRunning(char *error, size_t maxlength)
 {
 	SM_CHECK_IFACE(SDKHOOKS, g_pSDKHooks);
+	SM_CHECK_IFACE(SDKTOOLS, g_pSDKTools);
 	return true;
 }
 
 bool Sample::QueryInterfaceDrop(SMInterface *pInterface)
 {
 	if(pInterface == g_pSDKHooks)
+		return false;
+	if(pInterface == g_pSDKTools)
 		return false;
 	return IExtensionInterface::QueryInterfaceDrop(pInterface);
 }
@@ -5476,6 +5532,10 @@ void Sample::NotifyInterfaceDrop(SMInterface *pInterface)
 	{
 		g_pSDKHooks->RemoveEntityListener(this);
 		g_pSDKHooks = NULL;
+	}
+	else if(strcmp(pInterface->GetInterfaceName(), SMINTERFACE_SDKTOOLS_NAME) == 0)
+	{
+		g_pSDKTools = NULL;
 	}
 }
 
@@ -5571,6 +5631,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	g_pGameConf->GetMemSig("g_pPopulationManager", (void **)&g_pPopulationManagerPtr);
 	g_pGameConf->GetMemSig("g_pMVMStats", (void **)&g_pMVMStatsPtr);
 	g_pGameConf->GetMemSig("g_hMannVsMachineLogic", (void **)&g_hMannVsMachineLogic);
+	g_pGameConf->GetMemSig("g_MannVsMachineUpgrades", (void **)&g_MannVsMachineUpgrades);
+
+	g_pGameConf->GetMemSig("CMannVsMachineUpgradeManager::LoadUpgradesFileFromPath", &CMannVsMachineUpgradeManagerLoadUpgradesFileFromPath);
 
 	g_pGameConf->GetMemSig("CSpawnLocation::Parse", &CSpawnLocationParsePtr);
 	g_pGameConf->GetMemSig("CSpawnLocation::SelectSpawnArea", &CSpawnLocationSelectSpawnArea);
@@ -5633,6 +5696,9 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 		m_CurrencyPacksOffset += sizeof(offset_pad_t);
 	}
 
+	gamehelpers->FindSendPropInfo("CTFGameRulesProxy", "m_pszCustomUpgradesFile", &info);
+	m_pszCustomUpgradesFileOffset = info.actual_offset;
+
 	popspawner_handle = handlesys->CreateType("popspawner", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
 	find_spawn_location = forwards->CreateForward("find_spawn_location", ET_Hook, 3, nullptr, Param_Cell, Param_Cell, Param_Array);
@@ -5652,6 +5718,7 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 	sharesys->RegisterLibrary(myself, "popspawner");
 
 	sharesys->AddDependency(myself, "sdkhooks.ext", true, true);
+	sharesys->AddDependency(myself, "sdktools.ext", true, true);
 
 	HandleSystemHack::init();
 	

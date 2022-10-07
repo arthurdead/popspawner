@@ -173,6 +173,11 @@
 				"library" "server"
 				"linux" "@_ZN18CPopulationManager12AllocateBotsEv"
 			}
+			"CMannVsMachineUpgradeManager::LoadUpgradesFileFromPath"
+			{
+				"library" "server"
+				"linux" "@_ZN28CMannVsMachineUpgradeManager24LoadUpgradesFileFromPathEPKc"
+			}
 			"g_pPopulationManager"
 			{
 				"library" "server"
@@ -187,6 +192,11 @@
 			{
 				"library" "server"
 				"linux" "@g_hMannVsMachineLogic"
+			}
+			"g_MannVsMachineUpgrades"
+			{
+				"library" "server"
+				"linux" "@g_MannVsMachineUpgrades"
 			}
 		}
 	}
