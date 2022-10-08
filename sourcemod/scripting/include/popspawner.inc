@@ -349,7 +349,99 @@ native bool claim_currency_pack(int client, int pack, float timeout = 1.0);
 #if !defined REQUIRE_EXTENSIONS
 public void __ext_popspawner_SetNTVOptional()
 {
-	
+	MarkNativeAsOptional("IPopulator.Parse");
+	MarkNativeAsOptional("IPopulator.HasEventChangeAttributes");
+	MarkNativeAsOptional("IPopulator.Spawner.get");
+	MarkNativeAsOptional("IPopulator.Type.get");
+	MarkNativeAsOptional("IPopulator.Delete");
+
+	MarkNativeAsOptional("IPopulationSpawner.Parse");
+	MarkNativeAsOptional("IPopulationSpawner.Spawn");
+	MarkNativeAsOptional("IPopulationSpawner.WhereRequired.get");
+	MarkNativeAsOptional("IPopulationSpawner.Various.get");
+	MarkNativeAsOptional("IPopulationSpawner.GetClass");
+	MarkNativeAsOptional("IPopulationSpawner.GetClassIcon");
+	MarkNativeAsOptional("IPopulationSpawner.GetHealth");
+	MarkNativeAsOptional("IPopulationSpawner.IsMiniBoss");
+	MarkNativeAsOptional("IPopulationSpawner.HasAttribute");
+	MarkNativeAsOptional("IPopulationSpawner.HasEventChangeAttributes");
+	MarkNativeAsOptional("IPopulationSpawner.Populator.get");
+	MarkNativeAsOptional("IPopulationSpawner.Custom.get");
+	MarkNativeAsOptional("IPopulationSpawner.Delete");
+
+	MarkNativeAsOptional("CustomPopulationSpawner.set_data");
+	MarkNativeAsOptional("CustomPopulationSpawner.get_data");
+	MarkNativeAsOptional("CustomPopulationSpawner.has_data");
+	MarkNativeAsOptional("CustomPopulationSpawner.set_data_array");
+	MarkNativeAsOptional("CustomPopulationSpawner.get_data_array");
+	MarkNativeAsOptional("CustomPopulationSpawner.Entry.get");
+
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.Parse.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.Spawn.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.HasEventChangeAttributes.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.GetClass.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.GetHealth.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.GetClassIcon.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.IsMiniBoss.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.HasAttribute.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.WhereRequired.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.IsVarious.set");
+	MarkNativeAsOptional("CustomPopulationSpawnerEntry.Delete.set");
+
+	MarkNativeAsOptional("register_popspawner");
+	MarkNativeAsOptional("create_spawner");
+	MarkNativeAsOptional("create_populator");
+	MarkNativeAsOptional("IsSpaceToSpawnHere");
+
+	MarkNativeAsOptional("SpawnLocation.Relative.get");
+	MarkNativeAsOptional("SpawnLocation.Relative.set");
+	MarkNativeAsOptional("SpawnLocation.ClosestPointOnNav.get");
+	MarkNativeAsOptional("SpawnLocation.ClosestPointOnNav.set");
+
+	MarkNativeAsOptional("CWaveSpawnPopulator.ParseAdditive");
+	MarkNativeAsOptional("CWaveSpawnPopulator.GetWaitForAllSpawned");
+	MarkNativeAsOptional("CWaveSpawnPopulator.GetWaitForAllDead");
+	MarkNativeAsOptional("CWaveSpawnPopulator.TotalCount.get");
+	MarkNativeAsOptional("CWaveSpawnPopulator.TotalCount.set");
+	MarkNativeAsOptional("CWaveSpawnPopulator.MaxActive.get");
+	MarkNativeAsOptional("CWaveSpawnPopulator.MaxActive.set");
+	MarkNativeAsOptional("CWaveSpawnPopulator.SpawnCount.get");
+	MarkNativeAsOptional("CWaveSpawnPopulator.SpawnCount.set");
+	MarkNativeAsOptional("CWaveSpawnPopulator.WaitBeforeStarting.get");
+	MarkNativeAsOptional("CWaveSpawnPopulator.WaitBeforeStarting.set");
+	MarkNativeAsOptional("CWaveSpawnPopulator.WaitBetweenSpawns.get");
+	MarkNativeAsOptional("CWaveSpawnPopulator.WaitBetweenSpawns.set");
+	MarkNativeAsOptional("CWaveSpawnPopulator.WaitBetweenSpawnsAfterDeath.get");
+	MarkNativeAsOptional("CWaveSpawnPopulator.WaitBetweenSpawnsAfterDeath.set");
+	MarkNativeAsOptional("CWaveSpawnPopulator.RandomSpawn.get");
+	MarkNativeAsOptional("CWaveSpawnPopulator.RandomSpawn.set");
+	MarkNativeAsOptional("CWaveSpawnPopulator.TotalCurrency.get");
+	MarkNativeAsOptional("CWaveSpawnPopulator.TotalCurrency.set");
+	MarkNativeAsOptional("CWaveSpawnPopulator.Parent.get");
+
+	MarkNativeAsOptional("CWave.ParseAdditive");
+	MarkNativeAsOptional("CWave.AddWaveSpawn");
+	MarkNativeAsOptional("CWave.WaitWhenDone.get");
+	MarkNativeAsOptional("CWave.WaitWhenDone.set");
+	MarkNativeAsOptional("CWave.Index.get");
+	MarkNativeAsOptional("CWave.WaveSpawnCount.get");
+	MarkNativeAsOptional("CWave.GetWaveSpawn");
+
+	MarkNativeAsOptional("pop_health_multiplier");
+	MarkNativeAsOptional("pop_damage_multiplier");
+	MarkNativeAsOptional("current_wave");
+	MarkNativeAsOptional("current_wave_index");
+	MarkNativeAsOptional("get_wave");
+	MarkNativeAsOptional("wave_count");
+	MarkNativeAsOptional("get_populator");
+	MarkNativeAsOptional("populator_count");
+	MarkNativeAsOptional("init_pop");
+	MarkNativeAsOptional("set_pop_filename");
+	MarkNativeAsOptional("merge_pop");
+	MarkNativeAsOptional("add_populator");
+
+	MarkNativeAsOptional("set_upgrades_file");
+	MarkNativeAsOptional("claim_currency_pack");
 }
 #endif
 
