@@ -2274,9 +2274,7 @@ void Sample::OnEntityCreated(CBaseEntity *pEntity, const char *classname)
 		}
 
 		CMannVsMachineStats *pStats{(CMannVsMachineStats *)gamehelpers->ReferenceToEntity(mvm_stats_ref)};
-		if(pStats) {
-			((CPopulationManager *)pEntity)->GetMembers().m_pMVMStats = pStats;
-		}
+		((CPopulationManager *)pEntity)->GetMembers().m_pMVMStats = pStats;
 	} else if(strcmp(classname, "tf_mann_vs_machine_stats") == 0) {
 		mvm_stats_ref = gamehelpers->EntityToReference(pEntity);
 
@@ -2292,9 +2290,7 @@ void Sample::OnEntityCreated(CBaseEntity *pEntity, const char *classname)
 		*g_hMannVsMachineLogic = (CMannVsMachineLogic *)pEntity;
 
 		CPopulationManager *pPopulator{(CPopulationManager *)gamehelpers->ReferenceToEntity(populator_ref)};
-		if(pPopulator) {
-			((CMannVsMachineLogic *)pEntity)->GetMembers().m_populationManager = pPopulator;
-		}
+		((CMannVsMachineLogic *)pEntity)->GetMembers().m_populationManager = pPopulator;
 	} else if(strcmp(classname, "tf_objective_resource") == 0) {
 		objective_resource_ref = gamehelpers->EntityToReference(pEntity);
 	} else if(strcmp(classname, "tf_gamerules") == 0) {
