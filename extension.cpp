@@ -1174,6 +1174,7 @@ private:
 };
 
 SH_DECL_MANUALHOOK0_void(GenericDtor, 1, 0, 0)
+SH_DECL_MANUALHOOK0_void(UpdateOnRemove, 0, 0, 0)
 SH_DECL_HOOK1(IPopulator, HasEventChangeAttributes, const, 0, bool, const char *);
 
 enum populator_type_t
@@ -2760,7 +2761,7 @@ static void hook_entity_killed_post(const CTakeDamageInfo &info)
 	RETURN_META(MRES_IGNORED);
 }
 
-static void hook_entity_dtor()
+static void hook_entity_removed()
 {
 	CBaseEntity *pEntity = META_IFACEPTR(CBaseEntity);
 
@@ -2777,7 +2778,7 @@ static void hook_entity_dtor()
 
 	SH_REMOVE_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed_pre), false);
 	SH_REMOVE_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed_post), true);
-	SH_REMOVE_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
+	SH_REMOVE_MANUALHOOK(UpdateOnRemove, pEntity, SH_STATIC(hook_entity_removed), false);
 
 	RETURN_META(MRES_HANDLED);
 }
@@ -2875,7 +2876,7 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 			if(it == entpopdata.cend()) {
 				it = entpopdata.emplace(ref, entpopdata_t{}).first;
 
-				SH_ADD_MANUALHOOK(GenericDtor, pEntity, SH_STATIC(hook_entity_dtor), false);
+				SH_ADD_MANUALHOOK(UpdateOnRemove, pEntity, SH_STATIC(hook_entity_removed), false);
 				SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed_pre), false);
 				SH_ADD_MANUALHOOK(Event_Killed, pEntity, SH_STATIC(hook_entity_killed_post), true);
 			}
@@ -5557,110 +5558,274 @@ public:
 
 bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 {
-	char pPath[MAX_PATH];
-	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/population");
-	filesystem->AddSearchPath( pPath, "POPULATION" );
-	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/population");
-	filesystem->AddSearchPath( pPath, "POPULATION" );
-	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/population");
-	filesystem->AddSearchPath( pPath, "POPULATION" );
-	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
-	filesystem->AddSearchPath( pPath, "POPULATION" );
-	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "tf2_misc_dir.vpk");
-	filesystem->AddSearchPath( pPath, "POPULATION" );
-
-	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/upgrades");
-	filesystem->AddSearchPath( pPath, "UPGRADES" );
-	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/upgrades");
-	filesystem->AddSearchPath( pPath, "UPGRADES" );
-	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/items");
-	filesystem->AddSearchPath( pPath, "UPGRADES" );
-	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
-	filesystem->AddSearchPath( pPath, "UPGRADES" );
-	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "tf2_misc_dir.vpk");
-	filesystem->AddSearchPath( pPath, "UPGRADES" );
-
-	gameconfs->LoadGameConfigFile("popspawner", &g_pGameConf, error, maxlen);
-	
-	CDetourManager::Init(g_pSM->GetScriptingEngine(), g_pGameConf);
-	
-	pParseSpawner = DETOUR_CREATE_STATIC(ParseSpawner, "IPopulationSpawner::ParseSpawner")
-	pParseSpawner->EnableDetour();
-
-	pFindSpawnLocation = DETOUR_CREATE_MEMBER(FindSpawnLocation, "CSpawnLocation::FindSpawnLocation")
-	pFindSpawnLocation->EnableDetour();
-
-	pSpawnLocationParse = DETOUR_CREATE_MEMBER(SpawnLocationParse, "CSpawnLocation::Parse")
-	pSpawnLocationParse->EnableDetour();
-
-	pWaveSpawnPopulatorParse = DETOUR_CREATE_MEMBER(WaveSpawnPopulatorParse, "CWaveSpawnPopulator::Parse")
-	pWaveSpawnPopulatorParse->EnableDetour();
-
-	pWaveParse = DETOUR_CREATE_MEMBER(WaveParse, "CWave::Parse")
-	pWaveParse->EnableDetour();
-
-	pFireEvent = DETOUR_CREATE_STATIC(FireEvent, "FireEvent")
-	pFireEvent->EnableDetour();
-
-	pPopulationManagerParse = DETOUR_CREATE_MEMBER(PopulationManagerParse, "CPopulationManager::Parse")
-	pPopulationManagerParse->EnableDetour();
-
-	pKeyValuesLoadFromFile = DETOUR_CREATE_MEMBER(KeyValuesLoadFromFile, "KeyValues::LoadFromFile")
-	pKeyValuesLoadFromFile->EnableDetour();
-
-	pStartCurrentWave = DETOUR_CREATE_MEMBER(StartCurrentWave, "CPopulationManager::StartCurrentWave")
-	pStartCurrentWave->EnableDetour();
-
-	pAllocateBots = DETOUR_CREATE_MEMBER(AllocateBots, "CPopulationManager::AllocateBots")
-	pAllocateBots->EnableDetour();
-
-	pWaveCompleteUpdate = DETOUR_CREATE_MEMBER(WaveCompleteUpdate, "CWave::WaveCompleteUpdate")
-	pWaveCompleteUpdate->EnableDetour();
+	if(!gameconfs->LoadGameConfigFile("popspawner", &g_pGameConf, error, maxlen)) {
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("AllocPooledString", &AllocPooledStringPtr);
+	if(AllocPooledStringPtr == nullptr) {
+		snprintf(error, maxlen, "could not get AllocPooledString address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("IsSpaceToSpawnHere", &IsSpaceToSpawnHerePtr);
+	if(IsSpaceToSpawnHerePtr == nullptr) {
+		snprintf(error, maxlen, "could not get IsSpaceToSpawnHere address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("CPopulationManager::OnPlayerKilled", &CPopulationManagerOnPlayerKilled);
+	if(CPopulationManagerOnPlayerKilled == nullptr) {
+		snprintf(error, maxlen, "could not get CPopulationManager::OnPlayerKilled address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("CWaveSpawnPopulator::GetCurrencyAmountPerDeath", &CWaveSpawnPopulatorGetCurrencyAmountPerDeath);
+	if(CWaveSpawnPopulatorGetCurrencyAmountPerDeath == nullptr) {
+		snprintf(error, maxlen, "could not get CWaveSpawnPopulator::GetCurrencyAmountPerDeath address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("g_pPopulationManager", (void **)&g_pPopulationManagerPtr);
+	if(g_pPopulationManagerPtr == nullptr) {
+		snprintf(error, maxlen, "could not get g_pPopulationManager address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("g_pMVMStats", (void **)&g_pMVMStatsPtr);
+	if(g_pMVMStatsPtr == nullptr) {
+		snprintf(error, maxlen, "could not get g_pMVMStats address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("g_hMannVsMachineLogic", (void **)&g_hMannVsMachineLogic);
+	if(g_hMannVsMachineLogic == nullptr) {
+		snprintf(error, maxlen, "could not get g_hMannVsMachineLogic address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("g_MannVsMachineUpgrades", (void **)&g_MannVsMachineUpgrades);
+	if(g_MannVsMachineUpgrades == nullptr) {
+		snprintf(error, maxlen, "could not get g_MannVsMachineUpgrades address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("CMannVsMachineUpgradeManager::LoadUpgradesFileFromPath", &CMannVsMachineUpgradeManagerLoadUpgradesFileFromPath);
+	if(CMannVsMachineUpgradeManagerLoadUpgradesFileFromPath == nullptr) {
+		snprintf(error, maxlen, "could not get CMannVsMachineUpgradeManager::LoadUpgradesFileFromPath address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("CSpawnLocation::Parse", &CSpawnLocationParsePtr);
+	if(CSpawnLocationParsePtr == nullptr) {
+		snprintf(error, maxlen, "could not get CSpawnLocation::Parse address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("CSpawnLocation::SelectSpawnArea", &CSpawnLocationSelectSpawnArea);
+	if(CSpawnLocationSelectSpawnArea == nullptr) {
+		snprintf(error, maxlen, "could not get CSpawnLocation::SelectSpawnArea address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("DoTeleporterOverride", &DoTeleporterOverridePtr);
+	if(DoTeleporterOverridePtr == nullptr) {
+		snprintf(error, maxlen, "could not get DoTeleporterOverride address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("ITFTeamSpawnAutoList::m_ITFTeamSpawnAutoListAutoList", (void **)&m_ITFTeamSpawnAutoListAutoList);
+	if(m_ITFTeamSpawnAutoListAutoList == nullptr) {
+		snprintf(error, maxlen, "could not get ITFTeamSpawnAutoList::m_ITFTeamSpawnAutoListAutoList address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("CWaveSpawnPopulator::CWaveSpawnPopulator", &CWaveSpawnPopulatorCTOR);
+	if(CWaveSpawnPopulatorCTOR == nullptr) {
+		snprintf(error, maxlen, "could not get CWaveSpawnPopulator::CWaveSpawnPopulator address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("CRandomPlacementPopulator::CRandomPlacementPopulator", &CRandomPlacementPopulatorCTOR);
+	if(CRandomPlacementPopulatorCTOR == nullptr) {
+		snprintf(error, maxlen, "could not get CRandomPlacementPopulator::CRandomPlacementPopulator address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("CPeriodicSpawnPopulator::CPeriodicSpawnPopulator", &CPeriodicSpawnPopulatorCTOR);
+	if(CPeriodicSpawnPopulatorCTOR == nullptr) {
+		snprintf(error, maxlen, "could not get CPeriodicSpawnPopulator::CPeriodicSpawnPopulator address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("CMissionPopulator::CMissionPopulator", &CMissionPopulatorCTOR);
+	if(CMissionPopulatorCTOR == nullptr) {
+		snprintf(error, maxlen, "could not get CMissionPopulator::CMissionPopulator address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("CWave::CWave", &CWaveCTOR);
+	if(CWaveCTOR == nullptr) {
+		snprintf(error, maxlen, "could not get CWave::CWave address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("CPopulationManager::SetPopulationFilename", &CPopulationManagerSetPopulationFilename);
+	if(CPopulationManagerSetPopulationFilename == nullptr) {
+		snprintf(error, maxlen, "could not get CPopulationManager::SetPopulationFilename address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("CPopulationManager::Initialize", &CPopulationManagerInitialize);
+	if(CPopulationManagerInitialize == nullptr) {
+		snprintf(error, maxlen, "could not get CPopulationManager::Initialize address");
+		return false;
+	}
+
 	g_pGameConf->GetMemSig("CPopulationManager::UpdateObjectiveResource", &CPopulationManagerUpdateObjectiveResource);
+	if(CPopulationManagerUpdateObjectiveResource == nullptr) {
+		snprintf(error, maxlen, "could not get CPopulationManager::UpdateObjectiveResource address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("ParseEvent", &ParseEventPtr);
+	if(ParseEventPtr == nullptr) {
+		snprintf(error, maxlen, "could not get ParseEvent address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("CTFPowerup::DropSingleInstance", &CTFPowerupDropSingleInstance);
+	if(CTFPowerupDropSingleInstance == nullptr) {
+		snprintf(error, maxlen, "could not get CTFPowerup::DropSingleInstance address");
+		return false;
+	}
 
 	g_pGameConf->GetMemSig("CBaseEntity::CalcAbsolutePosition", &CBaseEntityCalcAbsolutePosition);
-	g_pGameConf->GetMemSig("CBaseEntity::SetAbsOrigin", &CBaseEntitySetAbsOrigin);
+	if(CBaseEntityCalcAbsolutePosition == nullptr) {
+		snprintf(error, maxlen, "could not get CBaseEntity::CalcAbsolutePosition address");
+		return false;
+	}
 
-	int offset = -1;
-	g_pGameConf->GetOffset("CBaseCombatCharacter::Event_Killed", &offset);
-	SH_MANUALHOOK_RECONFIGURE(Event_Killed, offset, 0, 0);
+	g_pGameConf->GetMemSig("CBaseEntity::SetAbsOrigin", &CBaseEntitySetAbsOrigin);
+	if(CBaseEntitySetAbsOrigin == nullptr) {
+		snprintf(error, maxlen, "could not get CBaseEntity::SetAbsOrigin address");
+		return false;
+	}
+
+	int CBaseEntityUpdateOnRemove{-1};
+	g_pGameConf->GetOffset("CBaseEntity::UpdateOnRemove", &CBaseEntityUpdateOnRemove);
+	if(CBaseEntityUpdateOnRemove == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::UpdateOnRemove offset");
+		return false;
+	}
+
+	int CBaseCombatCharacterEvent_Killed{-1};
+	g_pGameConf->GetOffset("CBaseCombatCharacter::Event_Killed", &CBaseCombatCharacterEvent_Killed);
+	if(CBaseCombatCharacterEvent_Killed == -1) {
+		snprintf(error, maxlen, "could not get CBaseCombatCharacter::Event_Killed offset");
+		return false;
+	}
 
 	g_pGameConf->GetOffset("CBaseEntity::SetOwnerEntity", &CBaseEntitySetOwnerEntity);
+	if(CBaseEntitySetOwnerEntity == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::SetOwnerEntity offset");
+		return false;
+	}
+
 	g_pGameConf->GetOffset("CBaseEntity::WorldSpaceCenter", &CBaseEntityWorldSpaceCenter);
+	if(CBaseEntityWorldSpaceCenter == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::WorldSpaceCenter offset");
+		return false;
+	}
+
 	g_pGameConf->GetOffset("CBaseEntity::AcceptInput", &CBaseEntityAcceptInput);
+	if(CBaseEntityAcceptInput == -1) {
+		snprintf(error, maxlen, "could not get CBaseEntity::AcceptInput offset");
+		return false;
+	}
+
+	CDetourManager::Init(g_pSM->GetScriptingEngine(), g_pGameConf);
+
+	pParseSpawner = DETOUR_CREATE_STATIC(ParseSpawner, "IPopulationSpawner::ParseSpawner")
+	if(!pParseSpawner) {
+		snprintf(error, maxlen, "could not create IPopulationSpawner::ParseSpawner detour");
+		return false;
+	}
+
+	pFindSpawnLocation = DETOUR_CREATE_MEMBER(FindSpawnLocation, "CSpawnLocation::FindSpawnLocation")
+	if(!pFindSpawnLocation) {
+		snprintf(error, maxlen, "could not create CSpawnLocation::FindSpawnLocation detour");
+		return false;
+	}
+
+	pSpawnLocationParse = DETOUR_CREATE_MEMBER(SpawnLocationParse, "CSpawnLocation::Parse")
+	if(!pSpawnLocationParse) {
+		snprintf(error, maxlen, "could not create CSpawnLocation::Parse detour");
+		return false;
+	}
+
+	pWaveSpawnPopulatorParse = DETOUR_CREATE_MEMBER(WaveSpawnPopulatorParse, "CWaveSpawnPopulator::Parse")
+	if(!pWaveSpawnPopulatorParse) {
+		snprintf(error, maxlen, "could not create CWaveSpawnPopulator::Parse detour");
+		return false;
+	}
+
+	pWaveParse = DETOUR_CREATE_MEMBER(WaveParse, "CWave::Parse")
+	if(!pWaveParse) {
+		snprintf(error, maxlen, "could not create CWave::Parse detour");
+		return false;
+	}
+
+	pFireEvent = DETOUR_CREATE_STATIC(FireEvent, "FireEvent")
+	if(!pFireEvent) {
+		snprintf(error, maxlen, "could not create FireEvent detour");
+		return false;
+	}
+
+	pPopulationManagerParse = DETOUR_CREATE_MEMBER(PopulationManagerParse, "CPopulationManager::Parse")
+	if(!pPopulationManagerParse) {
+		snprintf(error, maxlen, "could not create CPopulationManager::Parse detour");
+		return false;
+	}
+
+	pKeyValuesLoadFromFile = DETOUR_CREATE_MEMBER(KeyValuesLoadFromFile, "KeyValues::LoadFromFile")
+	if(!pKeyValuesLoadFromFile) {
+		snprintf(error, maxlen, "could not create KeyValues::LoadFromFile detour");
+		return false;
+	}
+
+	pStartCurrentWave = DETOUR_CREATE_MEMBER(StartCurrentWave, "CPopulationManager::StartCurrentWave")
+	if(!pStartCurrentWave) {
+		snprintf(error, maxlen, "could not create CPopulationManager::StartCurrentWave detour");
+		return false;
+	}
+
+	pAllocateBots = DETOUR_CREATE_MEMBER(AllocateBots, "CPopulationManager::AllocateBots")
+	if(!pAllocateBots) {
+		snprintf(error, maxlen, "could not create CPopulationManager::AllocateBots detour");
+		return false;
+	}
+
+	pWaveCompleteUpdate = DETOUR_CREATE_MEMBER(WaveCompleteUpdate, "CWave::WaveCompleteUpdate")
+	if(!pWaveCompleteUpdate) {
+		snprintf(error, maxlen, "could not create CWave::WaveCompleteUpdate detour");
+		return false;
+	}
+
+	pParseSpawner->EnableDetour();
+	pFindSpawnLocation->EnableDetour();
+	pSpawnLocationParse->EnableDetour();
+	pWaveSpawnPopulatorParse->EnableDetour();
+	pWaveParse->EnableDetour();
+	pFireEvent->EnableDetour();
+	pPopulationManagerParse->EnableDetour();
+	pKeyValuesLoadFromFile->EnableDetour();
+	pStartCurrentWave->EnableDetour();
+	pAllocateBots->EnableDetour();
+	pWaveCompleteUpdate->EnableDetour();
+
+	SH_MANUALHOOK_RECONFIGURE(UpdateOnRemove, CBaseEntityUpdateOnRemove, 0, 0);
+	SH_MANUALHOOK_RECONFIGURE(Event_Killed, CBaseCombatCharacterEvent_Killed, 0, 0);
 
 	g_pEntityList = reinterpret_cast<CBaseEntityList *>(gamehelpers->GetGlobalEntityList());
 
@@ -5694,6 +5859,29 @@ bool Sample::SDK_OnLoad(char *error, size_t maxlen, bool late)
 
 	gamehelpers->FindSendPropInfo("CTFGameRulesProxy", "m_pszCustomUpgradesFile", &info);
 	m_pszCustomUpgradesFileOffset = info.actual_offset;
+
+	char pPath[MAX_PATH];
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/population");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/population");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/population");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "tf2_misc_dir.vpk");
+	filesystem->AddSearchPath( pPath, "POPULATION" );
+
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "data/upgrades");
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
+	smutils->BuildPath(Path_SM, pPath, MAX_PATH, "configs/upgrades");
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "scripts/items");
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, nullptr);
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
+	smutils->BuildPath(Path_Game, pPath, MAX_PATH, "tf2_misc_dir.vpk");
+	filesystem->AddSearchPath( pPath, "UPGRADES" );
 
 	popspawner_handle = handlesys->CreateType("popspawner", this, 0, nullptr, nullptr, myself->GetIdentity(), nullptr);
 
