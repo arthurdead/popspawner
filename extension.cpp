@@ -158,122 +158,6 @@ int vfunc_index(T func)
 	return info.vtblindex;
 }
 
-//TODO!!!!!!!!! update tf2sdk
-class CUtlStringHack
-{
-public:
-	CUtlStringHack() = delete;
-
-	~CUtlStringHack()
-	{
-		Purge();
-	}
-
-	void *AllocMemory( uint32 length )
-	{
-		void *pMemoryBlock;
-		if ( m_pString )
-		{
-			pMemoryBlock = realloc( m_pString, length + 1 );
-		}
-		else
-		{
-			pMemoryBlock = malloc( length + 1 );
-		}
-		m_pString = (char*)pMemoryBlock;
-		m_pString[ length ] = 0;
-
-		return pMemoryBlock;
-	}
-
-	void SetDirect( const char *pValue, int nChars )
-	{
-		if ( pValue && nChars > 0 )
-		{
-			if ( pValue == m_pString )
-			{
-				AssertMsg( nChars == Q_strlen(m_pString), "CUtlString::SetDirect does not support resizing strings in place." );
-				return; // Do nothing. Realloc in AllocMemory might move pValue's location resulting in a bad memcpy.
-			}
-
-			//Assert( nChars <= Min<int>( strnlen(pValue, nChars) + 1, nChars ) );
-			AllocMemory( nChars );
-			Q_memcpy( m_pString, pValue, nChars );
-		}
-		else
-		{
-			Purge();
-		}
-	}
-
-	void Purge()
-	{
-	    free( m_pString );
-	    m_pString = NULL;
-	}
-
-	void Set( const char *pValue )
-	{
-		int length = pValue ? V_strlen( pValue ) : 0;
-		SetDirect( pValue, length );
-	}
-
-	CUtlStringHack &operator=(const char *pValue)
-	{
-		Set(pValue);
-		return *this;
-	}
-
-	char *m_pString;
-};
-
-//TODO!!!!!!!!! update tf2sdk
-#define FmtStrVSNPrintfHack( szBuf, nBufSize, bQuietTruncation, ppszFormat, nPrevLen, lastArg ) \
-	do \
-	{ \
-		int     result; \
-		va_list arg_ptr; \
-		bool bTruncated = false; \
-		static int scAsserted = 0; \
-	\
-		va_start(arg_ptr, lastArg); \
-		result = vsnprintf( (szBuf), (nBufSize)-1, (*(ppszFormat)), arg_ptr ); \
-		va_end(arg_ptr); \
-	\
-		(szBuf)[(nBufSize)-1] = 0; \
-		if ( bTruncated && !(bQuietTruncation) && scAsserted < 5 ) \
-		{ \
-			Warning( "FmtStrVSNPrintf truncated to %d without QUIET_TRUNCATION specified!\n", ( int )( nBufSize ) ); \
-			AssertMsg( 0, "FmtStrVSNPrintf truncated without QUIET_TRUNCATION specified!\n" ); \
-			scAsserted++; \
-		} \
-		m_nLength = nPrevLen + result; \
-	} \
-	while (0)
-
-//TODO!!!!!!!!! update tf2sdk
-class CFmtStrHack
-{
-public:
-	CFmtStrHack() = delete;
-
-	virtual void InitQuietTruncation()
-	{
-		m_bQuietTruncation = false; 
-	}
-
-	const char *sprintf(PRINTF_FORMAT_STRING const char *pszFormat, ...) FMTFUNCTION( 2, 3 )
-	{
-		InitQuietTruncation();
-		FmtStrVSNPrintfHack(m_szBuf, FMTSTR_STD_LEN, m_bQuietTruncation, &pszFormat, 0, pszFormat ); 
-		return m_szBuf;
-	}
-
-	bool m_bQuietTruncation;
-	char m_szBuf[FMTSTR_STD_LEN];
-	int m_nLength;
-};
-
 enum
 {
 	TF_CLASS_UNDEFINED = 0,
@@ -992,7 +876,7 @@ struct CPopulationManager_members_t
 	bool m_bShouldResetFlag;
 	CUtlVector< const CTFPlayer* > m_donePlayers;
 
-	CUtlStringHack m_defaultEventChangeAttributesName;
+	CUtlString m_defaultEventChangeAttributesName;
 
 	// Respec
 	CUtlMap< uint64, int > m_PlayerRespecPoints;	// The number of upgrade respecs players (steamID) have
@@ -1470,24 +1354,24 @@ public:
 	float m_waitBetweenSpawns;				// between spawns of mobs
 	bool m_bWaitBetweenSpawnAfterDeath;
 
-	CFmtStrHack m_startWaveWarningSound;
+	CFmtStr m_startWaveWarningSound;
 	EventInfo *m_startWaveOutput;
 
-	CFmtStrHack m_firstSpawnWarningSound;
+	CFmtStr m_firstSpawnWarningSound;
 	EventInfo *m_firstSpawnOutput;
 
-	CFmtStrHack m_lastSpawnWarningSound;
+	CFmtStr m_lastSpawnWarningSound;
 	EventInfo *m_lastSpawnOutput;
 
-	CFmtStrHack m_doneWarningSound;
+	CFmtStr m_doneWarningSound;
 	EventInfo *m_doneOutput;
 
 	int		m_totalCurrency;
 	int		m_unallocatedCurrency;
 
-	CUtlStringHack m_name;
-	CUtlStringHack m_waitForAllSpawned;
-	CUtlStringHack m_waitForAllDead;
+	CUtlString m_name;
+	CUtlString m_waitForAllSpawned;
+	CUtlString m_waitForAllDead;
 
 	CountdownTimer m_timer;
 	EntityHandleVector_t m_activeVector;
@@ -1671,8 +1555,8 @@ public:
 	EventInfo *m_doneOutput;
 	EventInfo *m_initOutput;
 
-	CFmtStrHack m_description;
-	CFmtStrHack m_soundName;
+	CFmtStr m_description;
+	CFmtStr m_soundName;
 	
 	float m_waitWhenDone;
 	CountdownTimer m_doneTimer;	
@@ -3733,7 +3617,7 @@ cell_t CWaveSpawnPopulatorGetWaitForAllSpawned(IPluginContext *pContext, const c
 {
 	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
 
-	const char *str{obj->m_waitForAllSpawned.m_pString};
+	const char *str{obj->m_waitForAllSpawned.Get()};
 	if(!str) {
 		str = "";
 	}
@@ -3747,7 +3631,7 @@ cell_t CWaveSpawnPopulatorGetWaitForAllDead(IPluginContext *pContext, const cell
 {
 	CWaveSpawnPopulator *obj{(CWaveSpawnPopulator *)params[1]};
 
-	const char *str{obj->m_waitForAllDead.m_pString};
+	const char *str{obj->m_waitForAllDead.Get()};
 	if(!str) {
 		str = "";
 	}
@@ -4487,8 +4371,8 @@ bool Sample::SDK_OnMetamodLoad(ISmmAPI *ismm, char *error, size_t maxlen, bool l
 
 struct EventInfo
 {
-	CFmtStrHack m_target;
-	CFmtStrHack m_action;
+	CFmtStr m_target;
+	CFmtStr m_action;
 };
 
 void *ParseEventPtr{nullptr};
