@@ -33,7 +33,6 @@
 #include <algorithm>
 #include <utility>
 #include <string>
-#include <string_view>
 #include <cstring>
 
 #ifndef FMTFUNCTION
@@ -2193,7 +2192,8 @@ struct entpopdata_t
 	CWaveSpawnPopulator *m_pWaveSpawnPopulator{nullptr};
 };
 
-static std::unordered_map<int, entpopdata_t> entpopdata{};
+using entpopdata_map_t = std::unordered_map<int, entpopdata_t>;
+static entpopdata_map_t entpopdata{};
 
 void Sample::OnEntityDestroyed(CBaseEntity *pEntity)
 {
@@ -2567,7 +2567,7 @@ static void hook_entity_killed_pre(const CTakeDamageInfo &info)
 
 	int ref = gamehelpers->EntityToReference(pEntity);
 
-	auto it{entpopdata.find(ref)};
+	entpopdata_map_t::iterator it{entpopdata.find(ref)};
 	if(it != entpopdata.cend()) {
 		entpopdata_t &data{it->second};
 
@@ -2585,7 +2585,7 @@ static void hook_entity_killed_post(const CTakeDamageInfo &info)
 
 	int ref = gamehelpers->EntityToReference(pEntity);
 
-	auto it{entpopdata.find(ref)};
+	entpopdata_map_t::iterator it{entpopdata.find(ref)};
 	if(it != entpopdata.cend()) {
 		entpopdata_t &data{it->second};
 
@@ -2651,7 +2651,7 @@ static void hook_entity_removed()
 
 	int ref = gamehelpers->EntityToReference(pEntity);
 
-	auto it{entpopdata.find(ref)};
+	entpopdata_map_t::iterator it{entpopdata.find(ref)};
 	if(it != entpopdata.cend()) {
 		entpopdata_t &data{it->second};
 
@@ -2756,7 +2756,7 @@ static bool hook_spawner_spawn(const Vector &here, EntityHandleVector_t *result)
 
 			int ref = gamehelpers->EntityToReference(pEntity);
 
-			auto it{entpopdata.find(ref)};
+			entpopdata_map_t::iterator it{entpopdata.find(ref)};
 			if(it == entpopdata.cend()) {
 				it = entpopdata.emplace(ref, entpopdata_t{}).first;
 
@@ -2986,7 +2986,7 @@ DETOUR_DECL_STATIC2(ParseSpawner, IPopulationSpawner *, IPopulator *, populator,
 	
 	pop_entry_map_t::const_iterator it{
 		std::find_if(poentrypmap.cbegin(), poentrypmap.cend(),
-			[&name = std::as_const(name)](const auto &it) noexcept -> bool {
+			[&name](const auto &it) noexcept -> bool {
 				return (strncasecmp(it.first.c_str(), name.c_str(), it.first.length()) == 0);
 			}
 		)
@@ -3272,7 +3272,7 @@ cell_t set_data(IPluginContext *pContext, const cell_t *params)
 	char *name = nullptr;
 	pContext->LocalToString(params[2], &name);
 	
-	auto it{data.find(name)};
+	spvarmap_t::iterator it{data.find(name)};
 	if(it == data.end()) {
 		it = data.emplace(spvarmap_t::value_type{name, {}}).first;
 	}
@@ -3295,7 +3295,7 @@ cell_t get_data(IPluginContext *pContext, const cell_t *params)
 	char *name = nullptr;
 	pContext->LocalToString(params[2], &name);
 	
-	auto it{data.find(name)};
+	spvarmap_t::iterator it{data.find(name)};
 	if(it == data.end() || it->second.size() == 0) {
 		return pContext->ThrowNativeError("theres no data with the name %s", name);
 	}
@@ -3311,7 +3311,7 @@ cell_t has_data(IPluginContext *pContext, const cell_t *params)
 	char *name = nullptr;
 	pContext->LocalToString(params[2], &name);
 	
-	auto it{data.find(name)};
+	spvarmap_t::iterator it{data.find(name)};
 	return (it != data.end() && it->second.size() > 0);
 }
 
@@ -3323,7 +3323,7 @@ cell_t set_data_array(IPluginContext *pContext, const cell_t *params)
 	char *name = nullptr;
 	pContext->LocalToString(params[2], &name);
 	
-	auto it{data.find(name)};
+	spvarmap_t::iterator it{data.find(name)};
 	if(it == data.end()) {
 		it = data.emplace(spvarmap_t::value_type{name, {}}).first;
 	}
@@ -3350,7 +3350,7 @@ cell_t get_data_array(IPluginContext *pContext, const cell_t *params)
 	char *name = nullptr;
 	pContext->LocalToString(params[2], &name);
 	
-	auto it{data.find(name)};
+	spvarmap_t::iterator it{data.find(name)};
 	if(it == data.end()) {
 		it = data.emplace(spvarmap_t::value_type{name, {}}).first;
 	}
@@ -3780,14 +3780,12 @@ cell_t CWaveWaveGetWaveSpawn(IPluginContext *pContext, const cell_t *params)
 {
 	CWave *obj{(CWave *)params[1]};
 
-	auto &m_waveSpawnVector{obj->m_waveSpawnVector};
-
-	size_t idx{params[2]};
-	if(idx < 0 || idx >= m_waveSpawnVector.Count() || !m_waveSpawnVector.IsValidIndex(idx)) {
+	int idx{params[2]};
+	if(idx < 0 || idx >= obj->m_waveSpawnVector.Count() || !obj->m_waveSpawnVector.IsValidIndex(idx)) {
 		return 0;
 	}
 
-	return (cell_t)(m_waveSpawnVector[idx]);
+	return (cell_t)(obj->m_waveSpawnVector[idx]);
 }
 
 cell_t pop_health_multiplier(IPluginContext *pContext, const cell_t *params)
@@ -3841,9 +3839,9 @@ cell_t get_wave(IPluginContext *pContext, const cell_t *params)
 		return 0;
 	}
 
-	auto &m_waveVector{PopulationManager->GetMembers().m_waveVector};
+	CUtlVector<CWave *> &m_waveVector{PopulationManager->GetMembers().m_waveVector};
 
-	size_t idx{params[1]};
+	int idx{params[1]};
 	if(idx < 0 || idx >= m_waveVector.Count() || !m_waveVector.IsValidIndex(idx)) {
 		return 0;
 	}
@@ -3868,9 +3866,9 @@ cell_t get_populator(IPluginContext *pContext, const cell_t *params)
 		return 0;
 	}
 
-	auto &m_populatorVector{PopulationManager->GetMembers().m_populatorVector};
+	CUtlVector<IPopulator *> &m_populatorVector{PopulationManager->GetMembers().m_populatorVector};
 
-	size_t idx{params[1]};
+	int idx{params[1]};
 	if(idx < 0 || idx >= m_populatorVector.Count() || !m_populatorVector.IsValidIndex(idx)) {
 		return 0;
 	}
