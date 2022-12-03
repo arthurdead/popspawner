@@ -6,23 +6,23 @@
 		{
 			"CBaseCombatCharacter::Event_Killed"
 			{
-				"linux" "67"
+				"linux" "69"
 			}
 			"CBaseEntity::SetOwnerEntity"
 			{
-				"linux" "18"
+				"linux" "19"
 			}
 			"CBaseEntity::WorldSpaceCenter"
 			{
-				"linux" "153"
+				"linux" "156"
 			}
 			"CBaseEntity::AcceptInput"
 			{
-				"linux" "37"
+				"linux" "39"
 			}
 			"CBaseEntity::UpdateOnRemove"
 			{
-				"linux" "109"
+				"linux" "111"
 			}
 		}
 		"Signatures"
